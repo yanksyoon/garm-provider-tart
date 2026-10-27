@@ -6,12 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
+	"os"
+	"time"
 
 	commonParams "github.com/cloudbase/garm-provider-common/params"
 
 	"github.com/yanksyoon/garm-provider-tart/internal/hostctl"
 )
+
+// runner runs one hostctl verb on one host and returns its stdout (JSON). The
+// concrete implementation is *Client (the SSH transport); tests substitute an
+// in-memory fake to simulate a fleet without exec'ing ssh.
+type runner interface {
+	Run(ctx context.Context, verb string, args ...string) ([]byte, error)
+}
 
 // Provider implements the GARM external-provider operations by driving the
 // host-owned tart-hostctl registry over SSH. The host is the source of truth;
@@ -19,20 +27,43 @@ import (
 type Provider struct {
 	cfg          *Config
 	controllerID string
+	stderr       io.Writer
+
+	// clientFor builds the runner for one host. Tests replace it with a
+	// fake-fleet factory; it defaults to the real SSH client.
+	clientFor func(Host) runner
+
+	// waitMargin is the portion of the create timeout reserved for the create
+	// itself after a capacity wait (create_timeout − waitMargin).
+	waitMargin time.Duration
+	// probeInterval returns the delay between capacity-wait re-probes.
+	probeInterval func() time.Duration
 }
 
 // New builds a provider from a loaded config.
 func New(cfg *Config, controllerID string) *Provider {
-	return &Provider{cfg: cfg, controllerID: controllerID}
+	return &Provider{
+		cfg:           cfg,
+		controllerID:  controllerID,
+		stderr:        os.Stderr,
+		waitMargin:    defaultWaitMargin,
+		probeInterval: jitterInterval,
+	}
 }
 
-// client builds an SSH client for one host.
-func (p *Provider) client(host Host) *Client {
+// client builds the runner for one host.
+func (p *Provider) client(host Host) runner {
+	if p.clientFor != nil {
+		return p.clientFor(host)
+	}
 	return NewClient(host, p.cfg.SSHUser, p.cfg.SSHKey, p.cfg.KnownHosts, p.cfg.SSHBin, p.cfg.HostctlBin)
 }
 
-// CreateInstance renders the bootstrap JSON on r, clones and boots a VM on the
-// first configured host via hostctl, and prints the mapped ProviderInstance.
+// CreateInstance renders the bootstrap JSON on r, places the VM on the fleet
+// via the placement loop, clones and boots it, and prints the mapped
+// ProviderInstance. A placement fault (no_reachable_host / capacity) is
+// reported as an errored ProviderInstance so GARM distinguishes it in
+// provider_fault; a transport or tart failure is a hard error GARM retries.
 func (p *Provider) CreateInstance(r io.Reader, w io.Writer) error {
 	var bootstrap commonParams.BootstrapInstance
 	if err := json.NewDecoder(r).Decode(&bootstrap); err != nil {
@@ -47,32 +78,21 @@ func (p *Provider) CreateInstance(r io.Reader, w io.Writer) error {
 		image = p.cfg.Image
 	}
 
-	host := p.cfg.Hosts[0]
 	ctx, cancel := context.WithTimeout(context.Background(), p.cfg.CreateTimeout())
 	defer cancel()
 
-	out, err := p.client(host).Run(ctx, "create",
-		"--name", bootstrap.Name,
-		"--image", image,
-		"--cpu", strconv.Itoa(specs.cpu(p.cfg)),
-		"--mem", strconv.Itoa(specs.mem(p.cfg)),
-		"--disk", strconv.Itoa(specs.disk(p.cfg)),
-		"--controller", p.controllerID,
-		"--owner", bootstrap.PoolID,
-		"--host", host.Name,
-	)
+	started := time.Now()
+	inst, host, err := p.placeAndCreate(ctx, bootstrap.Name, image, specs, bootstrap.PoolID)
 	if err != nil {
 		var fe *FaultError
-		if errors.As(err, &fe) && fe.Fault == hostctl.FaultCapacity {
-			return writeJSON(w, erroredInstance(host, bootstrap.Name, fe.Message))
+		if errors.As(err, &fe) && (fe.Fault == FaultNoReachableHost || fe.Fault == hostctl.FaultCapacity) {
+			p.metric("create_latency_ms=%d outcome=%s host=%s", time.Since(started).Milliseconds(), fe.Fault, host.Name)
+			return writeJSON(w, faultInstance(host, bootstrap.Name, fe.Fault, fe.Message))
 		}
+		p.metric("create_latency_ms=%d outcome=error host=%s", time.Since(started).Milliseconds(), host.Name)
 		return err
 	}
-
-	var inst hostctl.Instance
-	if err := json.Unmarshal(out, &inst); err != nil {
-		return fmt.Errorf("parse hostctl create output: %w", err)
-	}
+	p.metric("create_latency_ms=%d outcome=ok host=%s", time.Since(started).Milliseconds(), host.Name)
 	return writeJSON(w, p.providerInstance(inst))
 }
 
@@ -100,11 +120,6 @@ func (p *Provider) GetInstance(instanceID string, w io.Writer) error {
 		return fmt.Errorf("parse hostctl get output: %w", err)
 	}
 	return writeJSON(w, p.providerInstance(inst))
-}
-
-// ListInstances is fan-out across the fleet and arrives with placement (T5).
-func (p *Provider) ListInstances(w io.Writer) error {
-	return writeJSON(w, []commonParams.ProviderInstance{})
 }
 
 // DeleteInstance removes one instance via hostctl's delete verb. It is a no-op
@@ -141,11 +156,6 @@ func (p *Provider) Stop(instanceID string) error {
 	return fmt.Errorf("stop is not implemented")
 }
 
-// RemoveAllInstances is fan-out across the fleet and arrives with placement (T5).
-func (p *Provider) RemoveAllInstances() error {
-	return nil
-}
-
 // providerInstance maps a hostctl instance to the GARM view. Only `ready` (and
 // its post-bootstrap states) maps to GARM `running`; a `running` record whose
 // readiness probe failed maps to `error` with the last_error as provider_fault.
@@ -168,9 +178,10 @@ func (p *Provider) providerInstance(inst hostctl.Instance) commonParams.Provider
 	return pi
 }
 
-// erroredInstance is the capacity-fault answer: GARM treats it as a failed
-// create and retries rather than a provider crash.
-func erroredInstance(host Host, name, msg string) commonParams.ProviderInstance {
+// faultInstance is the placement-fault answer: an errored ProviderInstance whose
+// provider_fault names the fault so GARM can tell no_reachable_host from
+// capacity.
+func faultInstance(host Host, name, fault, msg string) commonParams.ProviderInstance {
 	return commonParams.ProviderInstance{
 		ProviderID:    host.Name + "/" + name,
 		Name:          name,
@@ -178,7 +189,7 @@ func erroredInstance(host Host, name, msg string) commonParams.ProviderInstance 
 		OSName:        "macos",
 		OSArch:        commonParams.Arm64,
 		Status:        commonParams.InstanceError,
-		ProviderFault: []byte(msg),
+		ProviderFault: []byte(fault + ": " + msg),
 	}
 }
 
@@ -199,12 +210,13 @@ func mapStatus(s hostctl.State) commonParams.InstanceStatus {
 }
 
 // extraSpecs is the subset of the pool extra_specs the provider understands:
-// per-VM resource overrides. Everything else GARM injects (the runner install
-// template wrapper) is ignored.
+// per-VM resource overrides plus a host pin. Everything else GARM injects (the
+// runner install template wrapper) is ignored.
 type extraSpecs struct {
-	CPU      int `json:"cpu"`
-	MemoryMB int `json:"mem"`
-	DiskGB   int `json:"disk"`
+	Host     string `json:"host"`
+	CPU      int    `json:"cpu"`
+	MemoryMB int    `json:"mem"`
+	DiskGB   int    `json:"disk"`
 }
 
 func parseExtraSpecs(raw json.RawMessage) extraSpecs {
