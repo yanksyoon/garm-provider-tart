@@ -1,0 +1,173 @@
+{
+  "garm_ref": "33ec092",
+  "garm_commit": "33ec0921418a470ca7e00dfb20ae111595da24e1",
+  "interface_version": "v0.1.1",
+  "required_stdout_fields": [
+    "addresses",
+    "name",
+    "os_arch",
+    "os_type",
+    "provider_id",
+    "status"
+  ],
+  "operations": {
+    "CreateInstance": {
+      "env": [
+        "GARM_COMMAND",
+        "GARM_CONTROLLER_ID",
+        "GARM_INTERFACE_VERSION",
+        "GARM_POOL_EXTRASPECS",
+        "GARM_POOL_ID",
+        "GARM_PROVIDER_CONFIG_FILE"
+      ],
+      "stdin_keys": [
+        "arch",
+        "ca-cert-bundle",
+        "callback-url",
+        "extra_specs",
+        "extra_specs.cpu",
+        "extra_specs.disk",
+        "extra_specs.mem",
+        "flavor",
+        "github-runner-group",
+        "image",
+        "instance-token",
+        "jit_config_enabled",
+        "labels",
+        "metadata-url",
+        "name",
+        "os_type",
+        "pool_id",
+        "proxy_config",
+        "proxy_config.http_proxy",
+        "proxy_config.https_proxy",
+        "proxy_config.no_proxy",
+        "repo_url",
+        "ssh-keys",
+        "tools",
+        "tools.architecture",
+        "tools.download_url",
+        "tools.filename",
+        "tools.os",
+        "tools.sha256_checksum",
+        "user_data_options",
+        "user_data_options.disable_updates_on_boot",
+        "user_data_options.enable_boot_debug",
+        "user_data_options.extra_packages"
+      ],
+      "stdout_keys": [
+        "addresses",
+        "addresses.address",
+        "addresses.type",
+        "name",
+        "os_arch",
+        "os_name",
+        "os_type",
+        "os_version",
+        "provider_id",
+        "status"
+      ],
+      "stdout_kind": "object",
+      "exit": 0
+    },
+    "DeleteInstance": {
+      "env": [
+        "GARM_COMMAND",
+        "GARM_CONTROLLER_ID",
+        "GARM_INSTANCE_ID",
+        "GARM_INTERFACE_VERSION",
+        "GARM_POOL_EXTRASPECS",
+        "GARM_POOL_ID",
+        "GARM_PROVIDER_CONFIG_FILE"
+      ],
+      "stdin_keys": [],
+      "stdout_keys": [],
+      "stdout_kind": "empty",
+      "exit": 0
+    },
+    "GetInstance": {
+      "env": [
+        "GARM_COMMAND",
+        "GARM_CONTROLLER_ID",
+        "GARM_INSTANCE_ID",
+        "GARM_INTERFACE_VERSION",
+        "GARM_POOL_EXTRASPECS",
+        "GARM_POOL_ID",
+        "GARM_PROVIDER_CONFIG_FILE"
+      ],
+      "stdin_keys": [],
+      "stdout_keys": [
+        "addresses",
+        "addresses.address",
+        "addresses.type",
+        "name",
+        "os_arch",
+        "os_name",
+        "os_type",
+        "os_version",
+        "provider_id",
+        "status"
+      ],
+      "stdout_kind": "object",
+      "exit": 0
+    },
+    "ListInstances": {
+      "env": [
+        "GARM_COMMAND",
+        "GARM_CONTROLLER_ID",
+        "GARM_INTERFACE_VERSION",
+        "GARM_POOL_EXTRASPECS",
+        "GARM_POOL_ID",
+        "GARM_PROVIDER_CONFIG_FILE"
+      ],
+      "stdin_keys": [],
+      "stdout_keys": [],
+      "stdout_kind": "array",
+      "exit": 0
+    },
+    "RemoveAllInstances": {
+      "env": [
+        "GARM_COMMAND",
+        "GARM_CONTROLLER_ID",
+        "GARM_INTERFACE_VERSION",
+        "GARM_POOL_EXTRASPECS",
+        "GARM_POOL_ID",
+        "GARM_PROVIDER_CONFIG_FILE"
+      ],
+      "stdin_keys": [],
+      "stdout_keys": [],
+      "stdout_kind": "empty",
+      "exit": 0
+    },
+    "StartInstance": {
+      "env": [
+        "GARM_COMMAND",
+        "GARM_CONTROLLER_ID",
+        "GARM_INSTANCE_ID",
+        "GARM_INTERFACE_VERSION",
+        "GARM_POOL_EXTRASPECS",
+        "GARM_POOL_ID",
+        "GARM_PROVIDER_CONFIG_FILE"
+      ],
+      "stdin_keys": [],
+      "stdout_keys": [],
+      "stdout_kind": "empty",
+      "exit": 0
+    },
+    "StopInstance": {
+      "env": [
+        "GARM_COMMAND",
+        "GARM_CONTROLLER_ID",
+        "GARM_INSTANCE_ID",
+        "GARM_INTERFACE_VERSION",
+        "GARM_POOL_EXTRASPECS",
+        "GARM_POOL_ID",
+        "GARM_PROVIDER_CONFIG_FILE"
+      ],
+      "stdin_keys": [],
+      "stdout_keys": [],
+      "stdout_kind": "empty",
+      "exit": 0
+    }
+  }
+}

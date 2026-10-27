@@ -1,0 +1,77 @@
+name: contract-canary
+
+# Nightly canary against upstream GARM main: capture the external-provider
+# contract from a fresh main checkout and diff its shape (env var names, JSON
+# keys, required stdout fields) against the pinned fixtures. Any drift fails
+# the job with a readable diff, so a change to the contract we do not own
+# fails here before a user does.
+#
+# The job needs no secrets and writes only to the runner scratch dir and the
+# job summary (no Docker, no external system, no repo mutation).
+
+on:
+  schedule:
+    - cron: '23 4 * * *' # nightly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contract-canary-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  canary:
+    name: contract canary (GARM main)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
+
+      # Sanity: the pinned contract still replays against our provider.
+      - name: Replay pinned contract
+        run: go test -tags contract ./test/contract/... -count=1 -run TestReplay
+
+      # A shallow, blob-less clone keeps the full commit history (so we can
+      # report what changed) without pulling the tree until needed.
+      - name: Capture contract from GARM main
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none https://github.com/cloudbase/garm "$RUNNER_TEMP/garm-main"
+          ./scripts/contract/capture.sh main "$RUNNER_TEMP/contract-capture" "$RUNNER_TEMP/garm-main"
+
+      - name: Report upstream commit
+        run: |
+          commit="$(git -C "$RUNNER_TEMP/garm-main" rev-parse HEAD)"
+          {
+            echo "Upstream GARM commit: \`$commit\`"
+            echo "https://github.com/cloudbase/garm/commit/$commit"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Diff the freshly captured shape against every pinned fixture. A shape
+      # drift fails this step; values that legitimately vary are never compared.
+      - name: Diff contract shape against pinned fixtures
+        run: |
+          GARM_CONTRACT_CAPTURE="$RUNNER_TEMP/contract-capture" \
+            go test -tags contract ./test/contract/... -count=1 -run TestCanaryDrift -v
+
+      # On drift, name the upstream files that changed since the pin.
+      - name: Report drifted upstream files
+        if: failure()
+        run: |
+          set -euo pipefail
+          pinned="$(sed -n 's/.*"garm_commit": *"\([0-9a-f]*\)".*/\1/p' test/contract/fixtures/*/manifest.json | head -n1)"
+          commit="$(git -C "$RUNNER_TEMP/garm-main" rev-parse HEAD)"
+          {
+            echo "## Upstream changes since pinned $pinned"
+            echo "https://github.com/cloudbase/garm/compare/$pinned...$commit"
+            echo
+            git -C "$RUNNER_TEMP/garm-main" log --oneline "$pinned..HEAD" -- \
+              runner/providers/v0.1.1 runner/providers/external runner/common 2>/dev/null || true
+          } >> "$GITHUB_STEP_SUMMARY"

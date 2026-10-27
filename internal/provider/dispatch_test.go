@@ -68,6 +68,34 @@ func TestRunRejectsUnknownCommand(t *testing.T) {
 	}
 }
 
+// TestRunRecognizesStartStopCommands locks the exact GARM_COMMAND spellings for
+// Start and Stop: GARM sends StartInstance/StopInstance (see garm-provider-common
+// execution/common), not Start/Stop. The old spellings must be rejected as
+// unknown so a mismatched GARM never silently no-ops.
+func TestRunRecognizesStartStopCommands(t *testing.T) {
+	// Arrange/Act: the commands GARM actually sends, without a config (so the
+	// recognised-but-unimplemented path fails later, with the failure exit).
+	for _, cmd := range []string{CommandStart, CommandStop} {
+		code, stdout, stderr := runWith(t, map[string]string{"GARM_COMMAND": cmd}, "")
+		// Assert: recognised (not the usage exit); stdout stays empty.
+		if code == exitUsage {
+			t.Fatalf("GARM_COMMAND=%q not recognised: exit %d (stderr: %s)", cmd, code, stderr)
+		}
+		if stdout != "" {
+			t.Fatalf("GARM_COMMAND=%q stdout = %q, want empty", cmd, stdout)
+		}
+	}
+
+	// Arrange/Act: the spellings GARM never sends.
+	for _, cmd := range []string{"Start", "Stop"} {
+		code, _, _ := runWith(t, map[string]string{"GARM_COMMAND": cmd}, "")
+		// Assert: rejected as an unknown command.
+		if code != exitUsage {
+			t.Fatalf("GARM_COMMAND=%q exit = %d, want %d (unknown command)", cmd, code, exitUsage)
+		}
+	}
+}
+
 func TestRunRequiresConfig(t *testing.T) {
 	// Arrange: a create call without a config path.
 	// Act: run it.
