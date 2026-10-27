@@ -1,17 +1,33 @@
 # Example provider config. GARM passes this path in GARM_PROVIDER_CONFIG_FILE.
 ssh_user = "garm"
 ssh_key = "/etc/garm/id_ed25519"
+known_hosts = "/etc/garm/known_hosts"   # empty disables host-key verification (dev only)
+
+# ssh_bin and hostctl_bin are overridable for the break-glass command wrapper
+# and for tests (testdata/bin/ssh + a fake hostctl).
+ssh_bin = "ssh"
+hostctl_bin = "/usr/local/bin/tart-hostctl"
+
 create_timeout_seconds = 900
-default_user = "runner"
+command_timeout_seconds = 30
 
 # The macOS licence agreement (section 2.B.iii) allows at most two guests per
 # Apple-branded host. Values above two are rejected at startup.
 slots_per_host = 2
 
+# Golden image and default guest resources, used when the bootstrap payload or
+# the pool extra_specs do not override them.
+image = "ghcr.io/cirruslabs/macos-tahoe-xcode@sha256:…"
+default_cpu = 4
+default_memory_mb = 8192
+default_disk_gb = 50
+
 [[hosts]]
 name = "mac-mini-01"
 address = "10.20.0.11"
+port = 22
 
 [[hosts]]
 name = "mac-mini-02"
 address = "10.20.0.12"
+port = 22

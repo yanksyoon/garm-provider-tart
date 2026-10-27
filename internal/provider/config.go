@@ -3,6 +3,7 @@ package provider
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -12,12 +13,32 @@ import (
 // host, so a larger value is a licence breach rather than a tuning choice.
 const maxSlotsPerHost = 2
 
+const (
+	defaultSSHPort              = 22
+	defaultCreateTimeoutSeconds = 900
+	defaultCommandTimeoutSecs   = 30
+	defaultHostctlBin           = "/usr/local/bin/tart-hostctl"
+	defaultCPU                  = 4
+	defaultMemoryMB             = 8192
+	defaultDiskGB               = 50
+)
+
 // Host is one Apple Silicon Mac mini that runs Tart VMs.
 type Host struct {
 	// Name is the stable identifier recorded in provider IDs.
 	Name string `toml:"name"`
 	// Address is the SSH target, host name or IP.
 	Address string `toml:"address"`
+	// Port is the SSH port. Zero means the default (22).
+	Port int `toml:"port"`
+}
+
+// port returns the SSH port, defaulting to 22.
+func (h Host) port() int {
+	if h.Port == 0 {
+		return defaultSSHPort
+	}
+	return h.Port
 }
 
 // Config mirrors the provider's TOML config file, whose path GARM passes in
@@ -27,12 +48,31 @@ type Config struct {
 	SSHUser string `toml:"ssh_user"`
 	// SSHKey is the path to the private key for SSHUser.
 	SSHKey string `toml:"ssh_key"`
-	// CreateTimeoutSeconds bounds one CreateInstance call.
+	// KnownHosts is the path to an OpenSSH known_hosts file. When empty, host
+	// keys are not verified (development only).
+	KnownHosts string `toml:"known_hosts"`
+	// SSHBin is the ssh client binary (default "ssh"). Overridable so the
+	// break-glass command wrapper, or tests, can substitute another binary.
+	SSHBin string `toml:"ssh_bin"`
+	// HostctlBin is the tart-hostctl binary on each host.
+	HostctlBin string `toml:"hostctl_bin"`
+
+	// CreateTimeoutSeconds bounds one CreateInstance call end to end.
 	CreateTimeoutSeconds int `toml:"create_timeout_seconds"`
+	// CommandTimeoutSeconds bounds one SSH command on a host.
+	CommandTimeoutSeconds int `toml:"command_timeout_seconds"`
 	// SlotsPerHost is the number of concurrent guests per host.
 	SlotsPerHost int `toml:"slots_per_host"`
-	// DefaultUser is the guest account that runs the GitHub runner.
-	DefaultUser string `toml:"default_user"`
+
+	// Image is the golden image to clone when the bootstrap payload does not
+	// carry one.
+	Image string `toml:"image"`
+	// DefaultCPU, DefaultMemoryMB and DefaultDiskGB are the tart set arguments
+	// used when the bootstrap extra_specs do not override them.
+	DefaultCPU      int `toml:"default_cpu"`
+	DefaultMemoryMB int `toml:"default_memory_mb"`
+	DefaultDiskGB   int `toml:"default_disk_gb"`
+
 	// Hosts is the fleet this provider manages.
 	Hosts []Host `toml:"hosts"`
 }
@@ -56,10 +96,13 @@ func LoadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// Validate rejects configs the provider cannot honour.
+// Validate fills defaults and rejects configs the provider cannot honour.
 func (c *Config) Validate() error {
 	if len(c.Hosts) == 0 {
 		return fmt.Errorf("no hosts configured")
+	}
+	if c.SSHUser == "" {
+		return fmt.Errorf("ssh_user is required")
 	}
 	if c.SlotsPerHost == 0 {
 		c.SlotsPerHost = 1
@@ -68,7 +111,22 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("slots_per_host %d exceeds the macOS licence cap of %d guests per host", c.SlotsPerHost, maxSlotsPerHost)
 	}
 	if c.CreateTimeoutSeconds == 0 {
-		c.CreateTimeoutSeconds = 900
+		c.CreateTimeoutSeconds = defaultCreateTimeoutSeconds
+	}
+	if c.CommandTimeoutSeconds == 0 {
+		c.CommandTimeoutSeconds = defaultCommandTimeoutSecs
+	}
+	if c.HostctlBin == "" {
+		c.HostctlBin = defaultHostctlBin
+	}
+	if c.DefaultCPU == 0 {
+		c.DefaultCPU = defaultCPU
+	}
+	if c.DefaultMemoryMB == 0 {
+		c.DefaultMemoryMB = defaultMemoryMB
+	}
+	if c.DefaultDiskGB == 0 {
+		c.DefaultDiskGB = defaultDiskGB
 	}
 	seen := make(map[string]bool, len(c.Hosts))
 	for _, host := range c.Hosts {
@@ -91,4 +149,14 @@ func (c *Config) HostByName(name string) (Host, bool) {
 		}
 	}
 	return Host{}, false
+}
+
+// CommandTimeout is the bound for one SSH command.
+func (c *Config) CommandTimeout() time.Duration {
+	return time.Duration(c.CommandTimeoutSeconds) * time.Second
+}
+
+// CreateTimeout is the end-to-end bound for one create call.
+func (c *Config) CreateTimeout() time.Duration {
+	return time.Duration(c.CreateTimeoutSeconds) * time.Second
 }

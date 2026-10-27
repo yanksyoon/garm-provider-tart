@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Drive the provider exactly as GARM does: environment variables in, one JSON
-# document (or nothing) on stdout, exit code out. No Mac and no Tart needed.
+# document (or nothing) on stdout, exit code out. No Mac and no Tart needed:
+# the provider's ssh transport is pointed at testdata/bin/ssh, which replays
+# canned hostctl output.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -10,14 +12,27 @@ trap 'rm -rf "$workdir"' EXIT
 binary="$workdir/garm-provider-tart"
 go build -o "$binary" "$repo_root/cmd/garm-provider-tart"
 
+# Canned hostctl responses replayed by the ssh stub.
+printf '%s\n' '{"name":"garm-abc123","provider_id":"mac-mini-01/garm-abc123","state":"ready","ip":"192.168.64.5"}' \
+  >"$workdir/instance.json"
+export SSH_STUB_OUTPUT="$workdir/instance.json"
+export SSH_STUB_EXIT="0"
+
 config="$workdir/provider.toml"
-cat >"$config" <<'TOML'
+cat >"$config" <<TOML
 ssh_user = "garm"
+ssh_bin = "$repo_root/testdata/bin/ssh"
+hostctl_bin = "/usr/local/bin/tart-hostctl"
+image = "ghcr.io/cirruslabs/macos-tahoe-xcode@sha256:abc"
 slots_per_host = 2
 
 [[hosts]]
 name = "mac-mini-01"
 address = "10.20.0.11"
+
+[[hosts]]
+name = "mac-mini-02"
+address = "10.20.0.12"
 TOML
 
 export GARM_PROVIDER_CONFIG_FILE="$config"
