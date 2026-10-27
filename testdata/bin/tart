@@ -1,0 +1,25 @@
+#!/bin/sh
+# Stub `tart` for hostctl tests: records argv and replays canned output.
+# Control via environment:
+#   TART_STUB_LOG     file to append each invocation's argv to
+#   TART_STUB_LIST    JSON body printed by `list --format json` (default [])
+#   TART_STUB_IP      IP printed by `ip` (default 192.168.64.5)
+#   TART_STUB_VERSION string printed by `--version` (default "tart 2.0.0")
+#   TART_STUB_EXIT    when set, exit with this code immediately (failure probe)
+set -u
+printf '%s\n' "$*" >> "${TART_STUB_LOG:-/dev/null}"
+if [ -n "${TART_STUB_EXIT:-}" ]; then
+  exit "$TART_STUB_EXIT"
+fi
+case "${1:-}" in
+  list)
+    printf '%s\n' "${TART_STUB_LIST:-[]}"
+    ;;
+  ip)
+    printf '%s\n' "${TART_STUB_IP:-192.168.64.5}"
+    ;;
+  --version)
+    printf '%s\n' "${TART_STUB_VERSION:-tart 2.0.0}"
+    ;;
+esac
+exit 0

@@ -1,0 +1,662 @@
+package hostctl
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// fakeTart is an in-memory Tart for precise control over each verb's outcome.
+type fakeTart struct {
+	mu         sync.Mutex
+	vms        map[string]VM
+	cloneErr   error
+	runErr     error
+	execErr    error
+	deleteErr  error
+	deleteNoop bool // when true, Delete returns nil without removing the VM
+	version    string
+	ip         string
+	clones     []string
+}
+
+func newFakeTart() *fakeTart {
+	return &fakeTart{vms: map[string]VM{}, version: "tart 2.0.0", ip: "192.168.64.5"}
+}
+
+func (f *fakeTart) Clone(image, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clones = append(f.clones, name)
+	if f.cloneErr != nil {
+		return f.cloneErr
+	}
+	f.vms[name] = VM{Name: name, State: "stopped"}
+	return nil
+}
+
+func (f *fakeTart) SetLabels(name string, labels map[string]string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	vm := f.vms[name]
+	if vm.Labels == nil {
+		vm.Labels = map[string]string{}
+	}
+	for k, v := range labels {
+		vm.Labels[k] = v
+	}
+	f.vms[name] = vm
+	return nil
+}
+
+func (f *fakeTart) SetResources(name string, cpu, memoryMB, diskGB int) error { return nil }
+func (f *fakeTart) Run(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.runErr != nil {
+		return f.runErr
+	}
+	vm := f.vms[name]
+	vm.State = "running"
+	f.vms[name] = vm
+	return nil
+}
+func (f *fakeTart) IP(name string) (string, error) { return f.ip, nil }
+func (f *fakeTart) Exec(name string, stdin io.Reader, args ...string) error {
+	return f.execErr
+}
+func (f *fakeTart) Stop(name string) error { return nil }
+func (f *fakeTart) Delete(name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	if !f.deleteNoop {
+		delete(f.vms, name)
+	}
+	return nil
+}
+func (f *fakeTart) List() ([]VM, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]VM, 0, len(f.vms))
+	for _, vm := range f.vms {
+		out = append(out, vm)
+	}
+	return out, nil
+}
+func (f *fakeTart) Version() (string, error) { return f.version, nil }
+
+type fakeHealth struct{ unlocked bool }
+
+func (h fakeHealth) KeychainUnlocked() (bool, error) { return h.unlocked, nil }
+func (h fakeHealth) FreeDiskBytes() (uint64, error)  { return 100 << 30, nil }
+
+func newTestService(t *testing.T, tart *fakeTart) *Service {
+	t.Helper()
+	return newTestServiceWithHealth(t, tart, fakeHealth{unlocked: true})
+}
+
+func newTestServiceWithHealth(t *testing.T, tart *fakeTart, health Health) *Service {
+	t.Helper()
+	return NewService(Options{
+		Root:         t.TempDir(),
+		Tart:         tart,
+		Health:       health,
+		HostName:     "mac-mini-01",
+		ControllerID: "controller-1",
+		SlotsPerHost: 2,
+	})
+}
+
+func createReq(name string) CreateRequest {
+	return CreateRequest{
+		Name:       name,
+		Image:      "ghcr.io/cirruslabs/macos-tahoe-xcode@sha256:abc",
+		CPU:        4,
+		MemoryMB:   8192,
+		DiskGB:     50,
+		Controller: "controller-1",
+		Pool:       "pool-1",
+		Host:       "mac-mini-01",
+	}
+}
+
+func faultOf(t *testing.T, err error) *FaultError {
+	t.Helper()
+	var fe *FaultError
+	if !errors.As(err, &fe) {
+		t.Fatalf("error %v is not a FaultError", err)
+	}
+	return fe
+}
+
+func TestCreateReachesReady(t *testing.T) {
+	// Arrange: a healthy host.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+
+	// Act: create.
+	inst, err := svc.Create(createReq("garm-abc123"))
+
+	// Assert: ready, with the provider ID and IP.
+	if err != nil {
+		t.Fatalf("Create error = %v, want nil", err)
+	}
+	if inst.State != StateReady {
+		t.Fatalf("state = %s, want ready", inst.State)
+	}
+	if inst.ProviderID != "mac-mini-01/garm-abc123" {
+		t.Fatalf("provider_id = %q, want mac-mini-01/garm-abc123", inst.ProviderID)
+	}
+	if inst.IP != "192.168.64.5" {
+		t.Fatalf("ip = %q, want 192.168.64.5", inst.IP)
+	}
+}
+
+func TestCreateExecFailureStaysRunning(t *testing.T) {
+	// Arrange: tart exec (the readiness probe) fails.
+	tart := newFakeTart()
+	tart.execErr = fmt.Errorf("guest agent not up")
+	svc := newTestService(t, tart)
+
+	// Act: create.
+	inst, err := svc.Create(createReq("garm-abc123"))
+
+	// Assert: no error, but the record is running, never ready, with last_error.
+	if err != nil {
+		t.Fatalf("Create error = %v, want nil (caller decides)", err)
+	}
+	if inst.State != StateRunning {
+		t.Fatalf("state = %s, want running", inst.State)
+	}
+	if inst.LastError == "" {
+		t.Fatal("last_error is empty, want the exec failure")
+	}
+	if rec, _ := svc.reg.Load("garm-abc123"); rec.State != StateRunning {
+		t.Fatalf("persisted state = %s, want running", rec.State)
+	}
+}
+
+func TestCreateKeychainLockedRefuses(t *testing.T) {
+	// Arrange: a locked login keychain.
+	tart := newFakeTart()
+	svc := newTestServiceWithHealth(t, tart, fakeHealth{unlocked: false})
+
+	// Act: create.
+	_, err := svc.Create(createReq("garm-abc123"))
+
+	// Assert: a keychain fault naming the fix, and no Tart command ran.
+	fe := faultOf(t, err)
+	if fe.Fault != FaultKeychain {
+		t.Fatalf("fault = %q, want %q", fe.Fault, FaultKeychain)
+	}
+	if !strings.Contains(fe.Message, "unlock-keychain") {
+		t.Fatalf("message %q does not name the fix", fe.Message)
+	}
+	if len(tart.clones) != 0 {
+		t.Fatalf("clone ran %d times, want 0", len(tart.clones))
+	}
+}
+
+func TestCreateDrainedRefuses(t *testing.T) {
+	// Arrange: a drained host.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	if err := svc.Drain(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: create.
+	_, err := svc.Create(createReq("garm-abc123"))
+
+	// Assert: a drain fault and no clone.
+	if fe := faultOf(t, err); fe.Fault != FaultDrained {
+		t.Fatalf("fault = %q, want %q", fe.Fault, FaultDrained)
+	}
+	if len(tart.clones) != 0 {
+		t.Fatalf("clone ran %d times, want 0", len(tart.clones))
+	}
+}
+
+func TestCreateCapacityRefusesWithoutResidue(t *testing.T) {
+	// Arrange: two slots.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+
+	// Act: fill both slots, then attempt a third.
+	for _, name := range []string{"garm-a00001", "garm-b00002"} {
+		if _, err := svc.Create(createReq(name)); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	_, err := svc.Create(createReq("garm-c00003"))
+
+	// Assert: a capacity fault, and no third clone or record.
+	if fe := faultOf(t, err); fe.Fault != FaultCapacity {
+		t.Fatalf("fault = %q, want %q", fe.Fault, FaultCapacity)
+	}
+	if len(tart.clones) != 2 {
+		t.Fatalf("clones = %d, want 2", len(tart.clones))
+	}
+	if _, lerr := svc.reg.Load("garm-c00003"); lerr != ErrNotFound {
+		t.Fatalf("third name left a record (err=%v)", lerr)
+	}
+}
+
+func TestConcurrentCreateNeverExceedsCapacity(t *testing.T) {
+	// Arrange: one host, two slots, ten concurrent creates.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+
+	const n = 10
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	names := make([]string, n)
+	for i := 0; i < n; i++ {
+		names[i] = fmt.Sprintf("garm-w%05d", i)
+	}
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = svc.Create(createReq(names[i]))
+		}(i)
+	}
+	wg.Wait()
+
+	// Assert: exactly two succeed, the rest are capacity faults, and the
+	// registry holds exactly two live records (no lost or double-issued slot).
+	var ok, capacity, other int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case faultOf(t, err).Fault == FaultCapacity:
+			capacity++
+		default:
+			other++
+		}
+	}
+	if ok != 2 {
+		t.Fatalf("successes = %d, want 2", ok)
+	}
+	if capacity != n-2 {
+		t.Fatalf("capacity faults = %d, want %d", capacity, n-2)
+	}
+	if other != 0 {
+		t.Fatalf("unexpected error type in %d creates", other)
+	}
+	records, err := svc.reg.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("live records = %d, want 2", len(records))
+	}
+}
+
+func TestCrashBetweenCloneAndRecordWriteAdoptsOrQuarantines(t *testing.T) {
+	// Arrange: a VM present in `tart list` with no registry record — exactly
+	// what a provider killed between `tart clone` and the record write leaves.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	tart.mu.Lock()
+	tart.vms["garm-orphan1"] = VM{Name: "garm-orphan1", Labels: map[string]string{controllerLabelKey: "controller-1"}}
+	tart.vms["garm-orphan2"] = VM{Name: "garm-orphan2"}
+	tart.mu.Unlock()
+
+	// Act: reconcile.
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert: the labelled VM is adopted, the unlabelled VM is quarantined.
+	adopted, err := svc.reg.Load("garm-orphan1")
+	if err != nil {
+		t.Fatalf("labelled VM not adopted: %v", err)
+	}
+	if adopted.State != StateAdopted {
+		t.Fatalf("adopted state = %s, want adopted", adopted.State)
+	}
+	quarantined, err := svc.reg.Load("garm-orphan2")
+	if err != nil {
+		t.Fatalf("unlabelled VM not quarantined: %v", err)
+	}
+	if quarantined.State != StateQuarantined {
+		t.Fatalf("quarantined state = %s, want quarantined", quarantined.State)
+	}
+}
+
+func TestAdoptForeignControllerLabelLeftAlone(t *testing.T) {
+	// Arrange: a VM carrying another controller's label.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	tart.mu.Lock()
+	tart.vms["garm-foreign"] = VM{Name: "garm-foreign", Labels: map[string]string{controllerLabelKey: "other-controller"}}
+	tart.mu.Unlock()
+
+	// Act: reconcile.
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert: no record was created, so it is neither adopted nor reaped.
+	if _, err := svc.reg.Load("garm-foreign"); err != ErrNotFound {
+		t.Fatalf("foreign VM was recorded (err=%v), want left alone", err)
+	}
+}
+
+func TestAdoptCountsAgainstCapacity(t *testing.T) {
+	// Arrange: one adopted VM occupying a slot.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	tart.mu.Lock()
+	tart.vms["garm-adopted"] = VM{Name: "garm-adopted", Labels: map[string]string{controllerLabelKey: "controller-1"}}
+	tart.mu.Unlock()
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: one create fills the remaining slot; a second must fault.
+	if _, err := svc.Create(createReq("garm-a00001")); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	_, err := svc.Create(createReq("garm-b00002"))
+
+	// Assert: the second create hits capacity because adopted + used == 2.
+	if fe := faultOf(t, err); fe.Fault != FaultCapacity {
+		t.Fatalf("fault = %q, want %q", fe.Fault, FaultCapacity)
+	}
+}
+
+func TestQuarantineUnlabelledVMReapedAfterTTL(t *testing.T) {
+	// Arrange: an unlabelled VM quarantined, and a clock we control.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	now := time.Now()
+	svc.now = func() time.Time { return now }
+	tart.mu.Lock()
+	tart.vms["garm-stray"] = VM{Name: "garm-stray"}
+	tart.mu.Unlock()
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.reg.Load("garm-stray"); err != nil {
+		t.Fatalf("stray VM not quarantined: %v", err)
+	}
+
+	// Act: advance past the 24 h TTL and reconcile again.
+	now = now.Add(25 * time.Hour)
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert: the VM is reaped and its record removed.
+	if _, err := svc.reg.Load("garm-stray"); err != ErrNotFound {
+		t.Fatalf("stray VM not reaped (err=%v)", err)
+	}
+	tart.mu.Lock()
+	_, present := tart.vms["garm-stray"]
+	tart.mu.Unlock()
+	if present {
+		t.Fatal("stray VM still present in tart list after reap")
+	}
+}
+
+func TestDeleteProvesRelease(t *testing.T) {
+	// Arrange: a ready VM.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	if _, err := svc.Create(createReq("garm-abc123")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: delete.
+	if err := svc.Delete("garm-abc123"); err != nil {
+		t.Fatalf("Delete error = %v, want nil", err)
+	}
+
+	// Assert: the record is gone and the VM is gone from tart list.
+	if _, err := svc.reg.Load("garm-abc123"); err != ErrNotFound {
+		t.Fatalf("record still present (err=%v)", err)
+	}
+	tart.mu.Lock()
+	_, present := tart.vms["garm-abc123"]
+	tart.mu.Unlock()
+	if present {
+		t.Fatal("VM still present in tart list after delete")
+	}
+}
+
+func TestDeleteTartFailureKeepsTombstoneThenRecovers(t *testing.T) {
+	// Arrange: a ready VM, then Tart delete starts failing.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	if _, err := svc.Create(createReq("garm-abc123")); err != nil {
+		t.Fatal(err)
+	}
+	tart.deleteErr = fmt.Errorf("tart delete: device busy")
+
+	// Act: first delete fails.
+	err := svc.Delete("garm-abc123")
+
+	// Assert: non-nil error, tombstone kept, slot still counted.
+	if err == nil {
+		t.Fatal("Delete succeeded despite tart failure, want error")
+	}
+	rec, lerr := svc.reg.Load("garm-abc123")
+	if lerr != nil {
+		t.Fatalf("tombstone lost: %v", lerr)
+	}
+	if rec.State != StateDeleting {
+		t.Fatalf("state = %s, want deleting", rec.State)
+	}
+	used, _, _, _ := svc.capacity()
+	if used != 1 {
+		t.Fatalf("used = %d, want 1 (slot still counted)", used)
+	}
+
+	// Act: Tart recovers, the next delete completes.
+	tart.deleteErr = nil
+	if err := svc.Delete("garm-abc123"); err != nil {
+		t.Fatalf("second Delete error = %v, want nil", err)
+	}
+
+	// Assert: record removed and the slot freed.
+	if _, lerr := svc.reg.Load("garm-abc123"); lerr != ErrNotFound {
+		t.Fatalf("record still present (err=%v)", lerr)
+	}
+	used, _, _, _ = svc.capacity()
+	if used != 0 {
+		t.Fatalf("used = %d, want 0 (slot freed)", used)
+	}
+}
+
+func TestDeleteLieKeepsSlotHeld(t *testing.T) {
+	// Arrange: tart delete returns success but leaves the VM in the list.
+	tart := newFakeTart()
+	tart.deleteNoop = true
+	svc := newTestService(t, tart)
+	if _, err := svc.Create(createReq("garm-abc123")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: delete.
+	err := svc.Delete("garm-abc123")
+
+	// Assert: error, tombstone kept, slot held.
+	if err == nil {
+		t.Fatal("Delete reported success although the VM is still listed")
+	}
+	rec, lerr := svc.reg.Load("garm-abc123")
+	if lerr != nil {
+		t.Fatalf("tombstone lost: %v", lerr)
+	}
+	if rec.State != StateDeleting {
+		t.Fatalf("state = %s, want deleting", rec.State)
+	}
+	used, _, _, _ := svc.capacity()
+	if used != 1 {
+		t.Fatalf("used = %d, want 1", used)
+	}
+}
+
+func TestDeleteAbsentVMIsNoOp(t *testing.T) {
+	// Arrange: no record, no VM.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+
+	// Act / Assert: deleting an unknown name succeeds silently.
+	if err := svc.Delete("garm-gone00"); err != nil {
+		t.Fatalf("Delete error = %v, want nil", err)
+	}
+}
+
+func TestBootstrapReadyToIdle(t *testing.T) {
+	// Arrange: a ready VM.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	if _, err := svc.Create(createReq("garm-abc123")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: bootstrap with a script.
+	inst, err := svc.Bootstrap("garm-abc123", strings.NewReader("#!/bin/bash\necho hi\n"))
+
+	// Assert: idle.
+	if err != nil {
+		t.Fatalf("Bootstrap error = %v, want nil", err)
+	}
+	if inst.State != StateIdle {
+		t.Fatalf("state = %s, want idle", inst.State)
+	}
+}
+
+func TestDrainThenUndrain(t *testing.T) {
+	// Arrange: a host.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+
+	// Act: drain, then create fails, then undrain, then create works.
+	if err := svc.Drain(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Create(createReq("garm-a00001")); faultOf(t, err).Fault != FaultDrained {
+		t.Fatalf("create while drained did not fault drained")
+	}
+	if err := svc.Undrain(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Create(createReq("garm-a00001")); err != nil {
+		t.Fatalf("create after undrain: %v", err)
+	}
+}
+
+func TestListExcludesQuarantined(t *testing.T) {
+	// Arrange: one created, one adopted, one quarantined VM.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	if _, err := svc.Create(createReq("garm-a00001")); err != nil {
+		t.Fatal(err)
+	}
+	tart.mu.Lock()
+	tart.vms["garm-adopted"] = VM{Name: "garm-adopted", Labels: map[string]string{controllerLabelKey: "controller-1"}}
+	tart.vms["garm-stray"] = VM{Name: "garm-stray"}
+	tart.mu.Unlock()
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: list.
+	instances, err := svc.List("", "")
+
+	// Assert: created + adopted reported, quarantined excluded.
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, inst := range instances {
+		names[inst.Name] = true
+	}
+	if !names["garm-a00001"] || !names["garm-adopted"] {
+		t.Fatalf("list = %v, want created and adopted", names)
+	}
+	if names["garm-stray"] {
+		t.Fatalf("quarantined VM leaked into list")
+	}
+}
+
+func TestStatusReportsHealthGate(t *testing.T) {
+	// Arrange: one created VM.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	if _, err := svc.Create(createReq("garm-abc123")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: status.
+	st, err := svc.Status()
+
+	// Assert: version, keychain, capacity and per-VM state are all reported.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.TartVersion == "" {
+		t.Fatal("tart_version is empty")
+	}
+	if !st.KeychainUnlocked {
+		t.Fatal("keychain_unlocked = false, want true")
+	}
+	if st.Capacity.Total != 2 || st.Capacity.Used != 1 {
+		t.Fatalf("capacity = %+v, want total=2 used=1", st.Capacity)
+	}
+	if len(st.Instances) != 1 {
+		t.Fatalf("instances = %d, want 1", len(st.Instances))
+	}
+}
+
+func TestCreateInvalidNameRejectedBeforeTart(t *testing.T) {
+	// Arrange: a name that could reach a shell.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+
+	// Act: create with an invalid name.
+	_, err := svc.Create(createReq("bad;rm -rf /"))
+
+	// Assert: a validation fault and no Tart command.
+	if fe := faultOf(t, err); fe.Fault != FaultValidation {
+		t.Fatalf("fault = %q, want %q", fe.Fault, FaultValidation)
+	}
+	if len(tart.clones) != 0 {
+		t.Fatalf("clone ran %d times, want 0", len(tart.clones))
+	}
+}
+
+func TestCreateIdempotentOnName(t *testing.T) {
+	// Arrange: a ready VM.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	if _, err := svc.Create(createReq("garm-abc123")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: create the same name again.
+	inst, err := svc.Create(createReq("garm-abc123"))
+
+	// Assert: the existing record is returned, no second clone.
+	if err != nil {
+		t.Fatalf("second Create error = %v, want nil", err)
+	}
+	if inst.State != StateReady {
+		t.Fatalf("state = %s, want ready", inst.State)
+	}
+	if len(tart.clones) != 1 {
+		t.Fatalf("clones = %d, want 1", len(tart.clones))
+	}
+}
