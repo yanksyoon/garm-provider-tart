@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,8 +21,14 @@ func writeConfig(t *testing.T, body string) string {
 	return path
 }
 
-const validConfig = `
+// providerConfig returns a valid config whose ssh_bin is the test stub.
+func providerConfig(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf(`
 ssh_user = "garm"
+ssh_bin = %q
+hostctl_bin = "/usr/local/bin/tart-hostctl"
+image = "ghcr.io/cirruslabs/macos-tahoe-xcode@sha256:abc"
 slots_per_host = 2
 
 [[hosts]]
@@ -31,7 +38,8 @@ address = "10.20.0.11"
 [[hosts]]
 name = "mac-mini-02"
 address = "10.20.0.12"
-`
+`, sshStubPath(t))
+}
 
 func env(m map[string]string) func(string) string {
 	return func(key string) string { return m[key] }
@@ -74,10 +82,11 @@ func TestRunRequiresConfig(t *testing.T) {
 }
 
 func TestCreateInstancePrintsProviderInstance(t *testing.T) {
-	// Arrange: a valid config and a bootstrap payload shaped like GARM's.
-	// Act: create an instance.
-	// Assert: one JSON object with a host-qualified provider ID and running status.
-	cfg := writeConfig(t, validConfig)
+	// Arrange: a stub ssh replaying a ready hostctl instance, and a bootstrap
+	// payload shaped like GARM's.
+	t.Setenv("SSH_STUB_OUTPUT", writeStubFile(t,
+		`{"name":"garm-abc123","provider_id":"mac-mini-01/garm-abc123","state":"ready","ip":"192.168.64.5"}`))
+	cfg := writeConfig(t, providerConfig(t))
 	bootstrap, err := json.Marshal(commonParams.BootstrapInstance{
 		Name:       "garm-abc123",
 		RepoURL:    "https://github.com/yanksyoon/garm-provider-tart",
@@ -90,16 +99,18 @@ func TestCreateInstancePrintsProviderInstance(t *testing.T) {
 		t.Fatalf("marshal bootstrap: %v", err)
 	}
 
+	// Act: create.
 	code, stdout, stderr := runWith(t, map[string]string{
 		"GARM_COMMAND":              CommandCreateInstance,
 		"GARM_PROVIDER_CONFIG_FILE": cfg,
 		"GARM_CONTROLLER_ID":        "controller-1",
 		"GARM_POOL_ID":              "9dcf590a-1192-4a9c-b3e4-e0902974c2c0",
 	}, string(bootstrap))
+
+	// Assert: exit 0, one JSON object with the host-qualified ID and running.
 	if code != exitOK {
 		t.Fatalf("exit code = %d (stderr %q), want %d", code, stderr, exitOK)
 	}
-
 	var instance commonParams.ProviderInstance
 	if err := json.Unmarshal([]byte(stdout), &instance); err != nil {
 		t.Fatalf("stdout is not one JSON object: %v (%q)", err, stdout)
@@ -115,28 +126,97 @@ func TestCreateInstancePrintsProviderInstance(t *testing.T) {
 	}
 }
 
-func TestCreateInstanceRejectsEmptyStdin(t *testing.T) {
-	// Arrange: an empty stdin, which happens when a caller forgets the payload.
-	// Act: create an instance.
-	// Assert: failure exit code and an actionable message.
-	cfg := writeConfig(t, validConfig)
-	code, _, stderr := runWith(t, map[string]string{
+func TestCreateExecFailureReportsErrorNotHealthy(t *testing.T) {
+	// Arrange: hostctl reports state running with a last_error (the readiness
+	// probe failed), never ready.
+	t.Setenv("SSH_STUB_OUTPUT", writeStubFile(t,
+		`{"name":"garm-abc123","provider_id":"mac-mini-01/garm-abc123","state":"running","last_error":"guest agent not up","ip":"192.168.64.5"}`))
+	cfg := writeConfig(t, providerConfig(t))
+	bootstrap, _ := json.Marshal(commonParams.BootstrapInstance{Name: "garm-abc123"})
+
+	// Act: create.
+	code, stdout, stderr := runWith(t, map[string]string{
 		"GARM_COMMAND":              CommandCreateInstance,
 		"GARM_PROVIDER_CONFIG_FILE": cfg,
-	}, "")
+		"GARM_CONTROLLER_ID":        "controller-1",
+	}, string(bootstrap))
+
+	// Assert: the provider reports an error, not a healthy instance.
+	if code != exitOK {
+		t.Fatalf("exit code = %d (stderr %q), want %d", code, stderr, exitOK)
+	}
+	var instance commonParams.ProviderInstance
+	if err := json.Unmarshal([]byte(stdout), &instance); err != nil {
+		t.Fatalf("stdout not JSON: %v", err)
+	}
+	if instance.Status != commonParams.InstanceError {
+		t.Fatalf("status = %q, want %q", instance.Status, commonParams.InstanceError)
+	}
+	if !strings.Contains(string(instance.ProviderFault), "guest agent not up") {
+		t.Fatalf("provider_fault = %q, want the exec failure", string(instance.ProviderFault))
+	}
+}
+
+func TestCreateCapacityFaultReturnsErroredInstance(t *testing.T) {
+	// Arrange: hostctl create exits 1 with a capacity fault.
+	t.Setenv("SSH_STUB_EXIT", "1")
+	t.Setenv("SSH_STUB_STDERR", writeStubFile(t, `{"fault":"capacity","error":"no free slot"}`))
+	cfg := writeConfig(t, providerConfig(t))
+	bootstrap, _ := json.Marshal(commonParams.BootstrapInstance{Name: "garm-abc123"})
+
+	// Act: create.
+	code, stdout, stderr := runWith(t, map[string]string{
+		"GARM_COMMAND":              CommandCreateInstance,
+		"GARM_PROVIDER_CONFIG_FILE": cfg,
+		"GARM_CONTROLLER_ID":        "controller-1",
+	}, string(bootstrap))
+
+	// Assert: an errored ProviderInstance with the capacity message, not a crash.
+	if code != exitOK {
+		t.Fatalf("exit code = %d (stderr %q), want %d", code, stderr, exitOK)
+	}
+	var instance commonParams.ProviderInstance
+	if err := json.Unmarshal([]byte(stdout), &instance); err != nil {
+		t.Fatalf("stdout not JSON: %v", err)
+	}
+	if instance.Status != commonParams.InstanceError {
+		t.Fatalf("status = %q, want %q", instance.Status, commonParams.InstanceError)
+	}
+	if !strings.Contains(string(instance.ProviderFault), "no free slot") {
+		t.Fatalf("provider_fault = %q, want the capacity message", string(instance.ProviderFault))
+	}
+}
+
+func TestCreateHostUnreachableReturnsHardError(t *testing.T) {
+	// Arrange: the host is unreachable (ssh exit 255).
+	t.Setenv("SSH_STUB_EXIT", "255")
+	cfg := writeConfig(t, providerConfig(t))
+	bootstrap, _ := json.Marshal(commonParams.BootstrapInstance{Name: "garm-abc123"})
+
+	// Act: create.
+	code, stdout, stderr := runWith(t, map[string]string{
+		"GARM_COMMAND":              CommandCreateInstance,
+		"GARM_PROVIDER_CONFIG_FILE": cfg,
+		"GARM_CONTROLLER_ID":        "controller-1",
+	}, string(bootstrap))
+
+	// Assert: a hard failure, never a success or a healthy instance.
 	if code != exitFailure {
 		t.Fatalf("exit code = %d, want %d", code, exitFailure)
 	}
-	if !strings.Contains(stderr, "bootstrap") {
-		t.Fatalf("stderr = %q, want a bootstrap decode error", stderr)
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if !strings.Contains(stderr, "unreachable") {
+		t.Fatalf("stderr = %q, want an unreachable error", stderr)
 	}
 }
 
 func TestListInstancesReturnsEmptyArray(t *testing.T) {
-	// Arrange: a valid config and no instances.
+	// Arrange: a valid config and no instances (fan-out lands in T5).
 	// Act: list.
 	// Assert: `[]`, not `null`, because GARM unmarshals into a slice.
-	cfg := writeConfig(t, validConfig)
+	cfg := writeConfig(t, providerConfig(t))
 	code, stdout, _ := runWith(t, map[string]string{
 		"GARM_COMMAND":              CommandListInstances,
 		"GARM_PROVIDER_CONFIG_FILE": cfg,
@@ -151,10 +231,10 @@ func TestListInstancesReturnsEmptyArray(t *testing.T) {
 }
 
 func TestDeleteUnknownInstanceIsNoOp(t *testing.T) {
-	// Arrange: GARM retries a delete for a VM that never existed.
-	// Act: delete it.
-	// Assert: success and no output, so the retry is not blocked.
-	cfg := writeConfig(t, validConfig)
+	// Arrange: GARM retries a delete for a VM that never existed; hostctl
+	// reports an absent VM as success.
+	t.Setenv("SSH_STUB_EXIT", "0")
+	cfg := writeConfig(t, providerConfig(t))
 	code, stdout, stderr := runWith(t, map[string]string{
 		"GARM_COMMAND":              CommandDeleteInstance,
 		"GARM_PROVIDER_CONFIG_FILE": cfg,
@@ -168,11 +248,28 @@ func TestDeleteUnknownInstanceIsNoOp(t *testing.T) {
 	}
 }
 
+func TestDeleteHostUnreachableReturnsHardError(t *testing.T) {
+	// Arrange: the host is unreachable during a delete.
+	t.Setenv("SSH_STUB_EXIT", "255")
+	cfg := writeConfig(t, providerConfig(t))
+	code, stdout, _ := runWith(t, map[string]string{
+		"GARM_COMMAND":              CommandDeleteInstance,
+		"GARM_PROVIDER_CONFIG_FILE": cfg,
+		"GARM_INSTANCE_ID":          "mac-mini-01/garm-abc123",
+	}, "")
+	if code != exitFailure {
+		t.Fatalf("exit code = %d, want %d", code, exitFailure)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+}
+
 func TestGetInstanceRoundTripsProviderID(t *testing.T) {
-	// Arrange: an instance GARM knows by its provider ID.
-	// Act: get it.
-	// Assert: the same provider ID comes back, so GARM can reconcile state.
-	cfg := writeConfig(t, validConfig)
+	// Arrange: an instance GARM knows by its provider ID; hostctl reports it.
+	t.Setenv("SSH_STUB_OUTPUT", writeStubFile(t,
+		`{"name":"garm-xyz789","provider_id":"mac-mini-02/garm-xyz789","state":"ready","ip":"192.168.64.7"}`))
+	cfg := writeConfig(t, providerConfig(t))
 	code, stdout, _ := runWith(t, map[string]string{
 		"GARM_COMMAND":              CommandGetInstance,
 		"GARM_PROVIDER_CONFIG_FILE": cfg,

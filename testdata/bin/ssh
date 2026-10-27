@@ -1,0 +1,17 @@
+#!/bin/sh
+# Stub `ssh` for provider transport tests: records argv and replays canned
+# output, then exits with a canned code.
+# Control via environment:
+#   SSH_STUB_LOG     file to append each invocation's argv to
+#   SSH_STUB_OUTPUT  path to a file whose contents are printed to stdout
+#   SSH_STUB_STDERR  path to a file whose contents are printed to stderr
+#   SSH_STUB_EXIT    exit code (default 0; 255 simulates an unreachable host)
+set -u
+printf '%s\n' "$*" >> "${SSH_STUB_LOG:-/dev/null}"
+if [ -n "${SSH_STUB_OUTPUT:-}" ]; then
+  cat "$SSH_STUB_OUTPUT"
+fi
+if [ -n "${SSH_STUB_STDERR:-}" ]; then
+  cat "$SSH_STUB_STDERR" >&2
+fi
+exit "${SSH_STUB_EXIT:-0}"
