@@ -54,3 +54,40 @@ npx --yes markdownlint-cli2 $(find . -name '*.md' -not -path './.git/*')
 
 CI runs the same commands (`.github/workflows/ci.yml`, job `ci`). `main` is protected: every change lands
 through a pull request with a green `ci` check.
+
+## Usage
+
+GARM execs the binary once per operation, with `GARM_COMMAND` selecting it:
+
+| `GARM_COMMAND` | stdout | notes |
+| --- | --- | --- |
+| `CreateInstance` | one `ProviderInstance` | reads `BootstrapInstance` JSON on stdin |
+| `GetInstance` | one `ProviderInstance` | `GARM_INSTANCE_ID` |
+| `ListInstances` | JSON array (`[]` when empty) | `GARM_POOL_ID` |
+| `DeleteInstance` | nothing | no-op when the VM is already gone |
+| `RemoveAllInstances` | nothing | scoped to `GARM_CONTROLLER_ID` |
+| `Start`, `Stop` | nothing | `GARM_INSTANCE_ID` |
+
+`provider_id` is `<host>/<vm-name>`. Diagnostics go to stderr; stdout carries JSON only.
+Exit codes: `0` success, `1` operation/configuration failure, `2` usage error.
+
+Minimal config (see `config.example.toml`):
+
+```toml
+ssh_user = "garm"
+slots_per_host = 2
+
+[[hosts]]
+name = "mac-mini-01"
+address = "10.20.0.11"
+```
+
+`slots_per_host` above 2 is rejected: the macOS licence allows two guests per host.
+
+Nothing talks to a Mac yet — the host driver, slot allocator and state file are the next change.
+`scripts/mac/fake-garm.sh` exercises the contract end to end on Linux:
+
+```bash
+scripts/mac/fake-garm.sh create | jq -e '.provider_id and .status=="running"'
+scripts/mac/fake-garm.sh list   | jq -e 'type=="array"'
+```
