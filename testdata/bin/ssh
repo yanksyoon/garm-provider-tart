@@ -6,12 +6,32 @@
 #   SSH_STUB_OUTPUT  path to a file whose contents are printed to stdout
 #   SSH_STUB_STDERR  path to a file whose contents are printed to stderr
 #   SSH_STUB_EXIT    exit code (default 0; 255 simulates an unreachable host)
+#
+# The output and exit code can also be routed by the hostctl verb, so one stub
+# can serve a probe-then-create flow:
+#   SSH_STUB_STATUS_OUTPUT / SSH_STUB_STATUS_EXIT   (`status`)
+#   SSH_STUB_CREATE_OUTPUT / SSH_STUB_CREATE_EXIT   (`create`)
+#   SSH_STUB_LIST_OUTPUT   / SSH_STUB_LIST_EXIT     (`list`)
+#   SSH_STUB_GET_OUTPUT    / SSH_STUB_GET_EXIT      (`get`)
+#   SSH_STUB_DELETE_OUTPUT / SSH_STUB_DELETE_EXIT   (`delete`)
+# Each falls back to the unscoped SSH_STUB_OUTPUT / SSH_STUB_EXIT.
 set -u
 printf '%s\n' "$*" >> "${SSH_STUB_LOG:-/dev/null}"
-if [ -n "${SSH_STUB_OUTPUT:-}" ]; then
-  cat "$SSH_STUB_OUTPUT"
+
+out="${SSH_STUB_OUTPUT:-}"
+ex="${SSH_STUB_EXIT:-0}"
+case "$*" in
+  *" status"*) out="${SSH_STUB_STATUS_OUTPUT:-$out}"; ex="${SSH_STUB_STATUS_EXIT:-$ex}" ;;
+  *" create"*) out="${SSH_STUB_CREATE_OUTPUT:-$out}"; ex="${SSH_STUB_CREATE_EXIT:-$ex}" ;;
+  *" list"*)   out="${SSH_STUB_LIST_OUTPUT:-$out}";   ex="${SSH_STUB_LIST_EXIT:-$ex}" ;;
+  *" get"*)    out="${SSH_STUB_GET_OUTPUT:-$out}";    ex="${SSH_STUB_GET_EXIT:-$ex}" ;;
+  *" delete"*) out="${SSH_STUB_DELETE_OUTPUT:-$out}"; ex="${SSH_STUB_DELETE_EXIT:-$ex}" ;;
+esac
+
+if [ -n "$out" ]; then
+  cat "$out"
 fi
 if [ -n "${SSH_STUB_STDERR:-}" ]; then
   cat "$SSH_STUB_STDERR" >&2
 fi
-exit "${SSH_STUB_EXIT:-0}"
+exit "$ex"
