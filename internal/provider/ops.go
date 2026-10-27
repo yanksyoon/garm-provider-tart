@@ -58,7 +58,7 @@ func (p *Provider) CreateInstance(r io.Reader, w io.Writer) error {
 		"--mem", strconv.Itoa(specs.mem(p.cfg)),
 		"--disk", strconv.Itoa(specs.disk(p.cfg)),
 		"--controller", p.controllerID,
-		"--pool", bootstrap.PoolID,
+		"--owner", bootstrap.PoolID,
 		"--host", host.Name,
 	)
 	if err != nil {

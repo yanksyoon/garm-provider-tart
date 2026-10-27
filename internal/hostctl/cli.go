@@ -77,11 +77,11 @@ func Run(args []string, env CLIEnv, stdin io.Reader, stdout, stderr io.Writer) i
 		}
 		return writeJSON(stdout, inst, stderr)
 	case "list":
-		controller, pool, err := parseList(rest)
+		controller, owner, err := parseList(rest)
 		if err != nil {
 			return writeErr(stderr, err)
 		}
-		instances, err := svc.List(controller, pool)
+		instances, err := svc.List(controller, owner)
 		if err != nil {
 			return writeErr(stderr, err)
 		}
@@ -187,15 +187,15 @@ func parseCreate(args []string) (CreateRequest, error) {
 	req.CPU, _ = intFlag(args, "cpu", 4)
 	req.MemoryMB, _ = intFlag(args, "mem", 8192)
 	req.DiskGB, _ = intFlag(args, "disk", 50)
-	req.Pool, _ = optionalStringFlag(args, "pool")
+	req.Owner, _ = optionalStringFlag(args, "owner")
 	req.Host, _ = optionalStringFlag(args, "host")
 	return req, nil
 }
 
-func parseList(args []string) (controller, pool string, err error) {
+func parseList(args []string) (controller, owner string, err error) {
 	controller, _ = optionalStringFlag(args, "controller")
-	pool, _ = optionalStringFlag(args, "pool")
-	return controller, pool, nil
+	owner, _ = optionalStringFlag(args, "owner")
+	return controller, owner, nil
 }
 
 func optionalStringFlag(args []string, name string) (string, bool) {

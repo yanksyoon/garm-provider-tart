@@ -92,9 +92,9 @@ The hostctl verb set (each JSON on stdout, diagnostics on stderr, exit `0/1/2`):
 
 ```text
 status [--json]                                   host health, keychain, disk, capacity
-create --name --image --cpu --mem --disk --controller --pool [--host]
+create --name --image --cpu --mem --disk --controller --owner [--host]
 get --name
-list [--controller --pool]
+list [--controller --owner]
 delete --name                                     proves release before returning
 bootstrap --name --script -                       runs the script in the guest
 drain / undrain                                   refuse / allow new creates

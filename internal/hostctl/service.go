@@ -153,7 +153,7 @@ type CreateRequest struct {
 	MemoryMB   int
 	DiskGB     int
 	Controller string
-	Pool       string
+	Owner      string
 	Host       string
 }
 
@@ -217,7 +217,7 @@ func (s *Service) create(req CreateRequest) (Instance, error) {
 		Name:         req.Name,
 		ProviderID:   providerID,
 		ControllerID: req.Controller,
-		PoolID:       req.Pool,
+		OwnerID:      req.Owner,
 		Image:        req.Image,
 		State:        StateCloning,
 		Lease:        Lease{Holder: req.Controller, AcquiredAt: now, TTLSec: defaultLeaseTTLSeconds},
@@ -354,12 +354,12 @@ func (s *Service) inTart(name string) bool {
 	return false
 }
 
-// List implements the `list` verb, optionally filtered by controller or pool.
+// List implements the `list` verb, optionally filtered by controller or owner.
 // Quarantined VMs are excluded: they are not GARM instances.
-func (s *Service) List(controller, pool string) ([]Instance, error) {
+func (s *Service) List(controller, owner string) ([]Instance, error) {
 	var result []Instance
 	err := s.lock(false, func() error {
-		instances, err := s.listLocked(controller, pool)
+		instances, err := s.listLocked(controller, owner)
 		if err != nil {
 			return err
 		}
@@ -371,7 +371,7 @@ func (s *Service) List(controller, pool string) ([]Instance, error) {
 
 // listLocked is the lock-free body of List; Status calls it while it already
 // holds the exclusive lock, since a verb must not re-acquire the flock it owns.
-func (s *Service) listLocked(controller, pool string) ([]Instance, error) {
+func (s *Service) listLocked(controller, owner string) ([]Instance, error) {
 	records, err := s.reg.All()
 	if err != nil {
 		return nil, err
@@ -392,7 +392,7 @@ func (s *Service) listLocked(controller, pool string) ([]Instance, error) {
 		if controller != "" && rec.ControllerID != controller {
 			continue
 		}
-		if pool != "" && rec.PoolID != pool {
+		if owner != "" && rec.OwnerID != owner {
 			continue
 		}
 		_, inTart := byName[rec.Name]

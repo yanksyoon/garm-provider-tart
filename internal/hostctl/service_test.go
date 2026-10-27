@@ -122,7 +122,7 @@ func createReq(name string) CreateRequest {
 		MemoryMB:   8192,
 		DiskGB:     50,
 		Controller: "controller-1",
-		Pool:       "pool-1",
+		Owner:      "owner-1",
 		Host:       "mac-mini-01",
 	}
 }

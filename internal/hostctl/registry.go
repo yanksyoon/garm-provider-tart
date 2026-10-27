@@ -36,7 +36,7 @@ type Record struct {
 	Name          string     `json:"name"`
 	ProviderID    string     `json:"provider_id"`
 	ControllerID  string     `json:"controller_id"`
-	PoolID        string     `json:"pool_id"`
+	OwnerID       string     `json:"owner_id"`
 	Image         string     `json:"image"`
 	State         State      `json:"state"`
 	Lease         Lease      `json:"lease"`
