@@ -12,10 +12,17 @@ trap 'rm -rf "$workdir"' EXIT
 binary="$workdir/garm-provider-tart"
 go build -o "$binary" "$repo_root/cmd/garm-provider-tart"
 
-# Canned hostctl responses replayed by the ssh stub.
+# Canned hostctl responses replayed by the ssh stub, routed by verb so the
+# probe-then-create flow works.
+printf '%s\n' '{"tart_version":"tart 2.0.0","keychain_unlocked":true,"free_disk_bytes":100000000000,"drained":false,"capacity":{"total":2,"used":0,"adopted":0,"quarantined":0},"instances":[]}' \
+  >"$workdir/status.json"
 printf '%s\n' '{"name":"garm-abc123","provider_id":"mac-mini-01/garm-abc123","state":"ready","ip":"192.168.64.5"}' \
   >"$workdir/instance.json"
-export SSH_STUB_OUTPUT="$workdir/instance.json"
+printf '%s\n' '[]' >"$workdir/instances.json"
+export SSH_STUB_STATUS_OUTPUT="$workdir/status.json"
+export SSH_STUB_CREATE_OUTPUT="$workdir/instance.json"
+export SSH_STUB_GET_OUTPUT="$workdir/instance.json"
+export SSH_STUB_LIST_OUTPUT="$workdir/instances.json"
 export SSH_STUB_EXIT="0"
 
 config="$workdir/provider.toml"

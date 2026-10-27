@@ -60,7 +60,7 @@ func Run(getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer) 
 	}
 	provider := New(cfg, getenv("GARM_CONTROLLER_ID"))
 
-	if err := dispatch(provider, command, getenv, stdin, stdout); err != nil {
+	if err := dispatch(provider, command, getenv, stdin, stdout, stderr); err != nil {
 		fmt.Fprintln(stderr, err)
 		return exitFailure
 	}
@@ -79,14 +79,15 @@ func knownCommand(command string) bool {
 }
 
 // dispatch routes a known command to its operation.
-func dispatch(p *Provider, command string, getenv func(string) string, stdin io.Reader, stdout io.Writer) error {
+func dispatch(p *Provider, command string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer) error {
+	p.stderr = stderr
 	switch command {
 	case CommandCreateInstance:
 		return p.CreateInstance(stdin, stdout)
 	case CommandGetInstance:
 		return p.GetInstance(getenv("GARM_INSTANCE_ID"), stdout)
 	case CommandListInstances:
-		return p.ListInstances(stdout)
+		return p.ListInstances(getenv("GARM_POOL_ID"), stdout)
 	case CommandDeleteInstance:
 		return p.DeleteInstance(getenv("GARM_INSTANCE_ID"))
 	case CommandRemoveAllInstances:

@@ -17,6 +17,7 @@ const (
 	defaultSSHPort              = 22
 	defaultCreateTimeoutSeconds = 900
 	defaultCommandTimeoutSecs   = 30
+	defaultProbeTimeoutSeconds  = 3
 	defaultHostctlBin           = "/usr/local/bin/tart-hostctl"
 	defaultCPU                  = 4
 	defaultMemoryMB             = 8192
@@ -61,6 +62,10 @@ type Config struct {
 	CreateTimeoutSeconds int `toml:"create_timeout_seconds"`
 	// CommandTimeoutSeconds bounds one SSH command on a host.
 	CommandTimeoutSeconds int `toml:"command_timeout_seconds"`
+	// ProbeTimeoutSeconds bounds one hostctl status probe during placement.
+	// The whole probe pass runs in parallel, so it is bounded by this value,
+	// not by the number of hosts.
+	ProbeTimeoutSeconds int `toml:"probe_timeout_seconds"`
 	// SlotsPerHost is the number of concurrent guests per host.
 	SlotsPerHost int `toml:"slots_per_host"`
 
@@ -116,6 +121,9 @@ func (c *Config) Validate() error {
 	if c.CommandTimeoutSeconds == 0 {
 		c.CommandTimeoutSeconds = defaultCommandTimeoutSecs
 	}
+	if c.ProbeTimeoutSeconds == 0 {
+		c.ProbeTimeoutSeconds = defaultProbeTimeoutSeconds
+	}
 	if c.HostctlBin == "" {
 		c.HostctlBin = defaultHostctlBin
 	}
@@ -154,6 +162,11 @@ func (c *Config) HostByName(name string) (Host, bool) {
 // CommandTimeout is the bound for one SSH command.
 func (c *Config) CommandTimeout() time.Duration {
 	return time.Duration(c.CommandTimeoutSeconds) * time.Second
+}
+
+// ProbeTimeout is the bound for one host status probe during placement.
+func (c *Config) ProbeTimeout() time.Duration {
+	return time.Duration(c.ProbeTimeoutSeconds) * time.Second
 }
 
 // CreateTimeout is the end-to-end bound for one create call.
