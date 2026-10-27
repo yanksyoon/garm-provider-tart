@@ -25,7 +25,7 @@ it ships no darwin build. The provider therefore
 
 ## Planned layout
 
-```
+```text
 cmd/garm-provider-tart/   CLI entry point (GARM command dispatch)
 internal/                 config, host driver, slots, state, scheduler, template rendering
 scripts/mac/              host bootstrap, image refresh, runner install template
