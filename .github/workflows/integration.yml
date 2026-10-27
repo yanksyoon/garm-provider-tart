@@ -1,0 +1,51 @@
+name: integration
+
+on:
+  pull_request:
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'test/integration/**'
+      - 'Makefile'
+      - '.github/workflows/integration.yml'
+      - 'go.mod'
+      - 'go.sum'
+  schedule:
+    - cron: '17 3 * * *' # nightly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: integration (real GARM + fake host)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: false
+
+      # The test driver builds the provider + tart-hostctl binaries, brings up
+      # the GARM/Gitea/fake-host stack, runs the assertions, and tears it down
+      # (docker compose down -v) even on failure. Full output is tee'd so it can
+      # be uploaded as an artifact when the suite fails.
+      - name: Run integration suite
+        run: |
+          set -o pipefail
+          make integration 2>&1 | tee /tmp/integration.log
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-logs
+          path: /tmp/integration.log
+          if-no-files-found: ignore

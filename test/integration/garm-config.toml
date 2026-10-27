@@ -1,0 +1,36 @@
+# GARM controller config for the integration test. The provider binary, its
+# config files, wrapper and SSH key are mounted into the container at
+# /opt/garm-tart (read-only); the sqlite database lives under /etc/garm.
+[default]
+enable_webhook_management = true
+
+[apiserver]
+bind = "0.0.0.0"
+port = 9997
+use_tls = false
+
+[database]
+backend = "sqlite3"
+passphrase = "qK8#mP2$vL9@nR4&wT6^cF1!dG7%hJ3z"
+[database.sqlite3]
+db_file = "/var/lib/garm/garm.db"
+
+[jwt_auth]
+secret = ")9gk_4A6KrXz9D2u`0@MPea*sd6W`%@5MAWpWWJ3P3EqW~qB!!(Vd$FhNc*eU4vG"
+time_to_live = "8760h"
+
+[[provider]]
+name = "tart"
+provider_type = "external"
+description = "Tart provider (two fake hosts)"
+[provider.external]
+provider_executable = "/opt/garm-tart/provider-wrapper.sh"
+config_file = "/opt/garm-tart/provider-config.toml"
+
+[[provider]]
+name = "tart-blackhole"
+provider_type = "external"
+description = "Tart provider (unreachable host)"
+[provider.external]
+provider_executable = "/opt/garm-tart/provider-wrapper.sh"
+config_file = "/opt/garm-tart/provider-config-blackhole.toml"

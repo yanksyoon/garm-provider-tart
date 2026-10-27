@@ -1,0 +1,5 @@
+#!/bin/sh
+# Stub `security` for the integration fake host. The host driver probes the
+# login keychain with `security show-keychain-info`; this stub reports an
+# unlocked keychain so the create gate passes.
+exit 0

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Stub `df` for the integration fake host. The host driver runs
+# `df -B1 -P <path>` and reads the 4th field of the last output line as the
+# available byte count; this stub reports a fixed, healthy figure.
+path="/var/db/tart-fleet"
+if [ "${1:-}" = "-B1" ] && [ "${2:-}" = "-P" ] && [ -n "${3:-}" ]; then
+  path="${3}"
+fi
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf 'fakefs 100000000 1000000 99000000 1%% %s\n' "$path"
+exit 0

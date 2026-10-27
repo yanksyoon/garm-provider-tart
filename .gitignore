@@ -7,6 +7,9 @@
 /tmp/
 *.log
 
+# integration test working directory (built binaries, SSH key, staged configs)
+/test/integration/.work/
+
 # python tooling
 .venv/
 __pycache__/

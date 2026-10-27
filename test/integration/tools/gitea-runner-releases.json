@@ -1,0 +1,29 @@
+[
+  {
+    "tag_name": "v5.2.3",
+    "name": "v5.2.3",
+    "tarball_url": "https://gitea.com/gitea/runner/archive/v5.2.3.tar.gz",
+    "assets": [
+      {
+        "name": "gitea-runner-5.2.3-darwin-amd64",
+        "browser_download_url": "https://dl.gitea.com/runner/v5.2.3/gitea-runner-5.2.3-darwin-amd64"
+      },
+      {
+        "name": "gitea-runner-5.2.3-darwin-arm64",
+        "browser_download_url": "https://dl.gitea.com/runner/v5.2.3/gitea-runner-5.2.3-darwin-arm64"
+      },
+      {
+        "name": "gitea-runner-5.2.3-linux-amd64",
+        "browser_download_url": "https://dl.gitea.com/runner/v5.2.3/gitea-runner-5.2.3-linux-amd64"
+      },
+      {
+        "name": "gitea-runner-5.2.3-linux-arm64",
+        "browser_download_url": "https://dl.gitea.com/runner/v5.2.3/gitea-runner-5.2.3-linux-arm64"
+      },
+      {
+        "name": "gitea-runner-5.2.3-windows-amd64.exe",
+        "browser_download_url": "https://dl.gitea.com/runner/v5.2.3/gitea-runner-5.2.3-windows-amd64.exe"
+      }
+    ]
+  }
+]

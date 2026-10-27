@@ -1,0 +1,100 @@
+#!/bin/sh
+# Stub `tart` for the integration fake host.
+#
+# It records every invocation's argv to $TART_STUB_DIR/tart.log and fakes the
+# subset of the Tart CLI the host driver (tart-hostctl) uses:
+#   clone --stacked <image> <name>   create a fake VM record
+#   set <name> [--label k=v | --cpu.. --memory.. --disk-size-gb..]
+#   run --no-graphics <name>         mark the VM running
+#   stop <name>                      mark the VM stopped
+#   exec <name> -- <argv...>         pretend the guest command succeeded
+#   ip --wait <sec> <name>           print a fixed guest address
+#   list --format json               print the fake VM table as JSON
+#   delete <name>                    remove the fake VM record
+#   --version                        print a Tart version
+#
+# State lives under $TART_STUB_DIR (default /var/lib/tart-fake) so the test
+# driver can read it back through the compose exec channel.
+
+set -eu
+
+DIR="${TART_STUB_DIR:-/var/lib/tart-fake}"
+VMS="$DIR/vms"
+LOG="$DIR/tart.log"
+mkdir -p "$VMS" 2>/dev/null || true
+
+# Record the full argv, one invocation per line.
+printf '%s\n' "$*" >>"$LOG"
+
+cmd="${1:-}"
+
+case "$cmd" in
+  clone)
+    # clone --stacked <image> <name>
+    name="${4:-}"
+    [ -n "$name" ] || exit 1
+    mkdir -p "$VMS/$name"
+    printf 'stopped\n' >"$VMS/$name/state"
+    printf '{}\n' >"$VMS/$name/labels"
+    ;;
+  set)
+    # set <name> --label k=v   (the driver only ever sets one label)
+    name="${2:-}"
+    case "${3:-}" in
+      --label)
+        kv="${4:-}"
+        key="${kv%%=*}"
+        val="${kv#*=}"
+        printf '{"%s":"%s"}\n' "$key" "$val" >"$VMS/$name/labels"
+        ;;
+      *)
+        # resource set (--cpu/--memory/--disk-size-gb): ignored (fake hardware)
+        ;;
+    esac
+    ;;
+  run)
+    # run --no-graphics <name>
+    name="${3:-}"
+    [ -n "$name" ] || exit 1
+    printf 'running\n' >"$VMS/$name/state"
+    ;;
+  stop)
+    # stop <name>
+    name="${2:-}"
+    [ -n "$name" ] || exit 1
+    printf 'stopped\n' >"$VMS/$name/state"
+    ;;
+  exec)
+    # exec <name> -- <argv...>  → pretend the guest command succeeded
+    ;;
+  ip)
+    # ip --wait <sec> <name> → fixed guest address
+    printf '192.168.64.5\n'
+    ;;
+  list)
+    # list --format json → JSON array of {name,state,labels}
+    first=1
+    printf '['
+    for d in "$VMS"/*/; do
+      [ -d "$d" ] || continue
+      name=$(basename "$d")
+      state=$(cat "$d/state" 2>/dev/null || printf 'stopped')
+      labels=$(cat "$d/labels" 2>/dev/null || printf '{}')
+      if [ "$first" -eq 0 ]; then printf ','; fi
+      printf '{"name":"%s","state":"%s","labels":%s}' "$name" "$state" "$labels"
+      first=0
+    done
+    printf ']\n'
+    ;;
+  delete)
+    # delete <name>
+    name="${2:-}"
+    [ -n "$name" ] || exit 1
+    rm -rf -- "${VMS:?}/${name:?}"
+    ;;
+  --version)
+    printf 'tart 2.0.0\n'
+    ;;
+esac
+
+exit 0
