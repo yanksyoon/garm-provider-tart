@@ -1,0 +1,12 @@
+# build output
+/garm-provider-tart
+/dist/
+*.test
+
+# local runtime state
+/tmp/
+*.log
+
+# python tooling
+.venv/
+__pycache__/
