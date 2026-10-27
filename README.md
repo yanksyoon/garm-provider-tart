@@ -41,3 +41,16 @@ docs/                     ADR, reference, how-to
 ## Licence
 
 TBD.
+
+## Development
+
+```bash
+go build ./...
+go vet ./...
+go test -race ./...
+shellcheck -S warning $(find scripts -name '*.sh' 2>/dev/null)
+npx --yes markdownlint-cli2 $(find . -name '*.md' -not -path './.git/*')
+```
+
+CI runs the same commands (`.github/workflows/ci.yml`, job `ci`). `main` is protected: every change lands
+through a pull request with a green `ci` check.
