@@ -30,8 +30,8 @@ cmd="${1:-}"
 
 case "$cmd" in
   clone)
-    # clone --stacked <image> <name>
-    name="${4:-}"
+    # clone <image> <name>   (tart 2.x removed --stacked)
+    name="${3:-}"
     [ -n "$name" ] || exit 1
     mkdir -p "$VMS/$name"
     printf 'stopped\n' >"$VMS/$name/state"

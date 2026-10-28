@@ -86,6 +86,12 @@ builds GARM at `main`, re-captures, and diffs the shape against the pinned fixtu
 readable diff on drift. Regenerate the pin after an intentional upstream change with
 `make contract-capture GARM_REF=<sha>`. See `test/contract/`.
 
+Native hardware lane: on one macOS host, `scripts/mac/native-smoke.sh --run` drives real Tart through
+`tart-hostctl` (create → ready via `tart exec`, get, list, slot-cap refusal, delete, idempotent delete,
+reconcile) and `--cleanup` tears down every `garmtest-*` VM, the fleet dir and the image cache (idempotent;
+it never touches a VM whose name is not `garmtest-*`). See the script header for env overrides, what stays
+installed, and the reversal commands.
+
 CI runs the same commands (`.github/workflows/ci.yml`, job `ci`). `main` is protected: every change lands
 through a pull request with a green `ci` check.
 
