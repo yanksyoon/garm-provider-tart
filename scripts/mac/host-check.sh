@@ -61,7 +61,7 @@ run_check() {
 }
 
 run_check user            "garm user exists and authorized key is installed"
-run_check remote_login    "Remote Login (SSH) enabled"
+run_check remote_login    "Remote Login (SSH) enabled and restricted to $GARM_USER"
 run_check auto_login      "auto-login enabled for $GARM_USER"
 run_check keychain_daemon "login keychain unlocked at boot via LaunchDaemon"
 run_check power           "sleep disabled (pmset sleep 0, disablesleep 1)"
