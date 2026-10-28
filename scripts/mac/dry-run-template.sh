@@ -92,6 +92,9 @@ fi
 # let us count install/start/config invocations across both runs.
 run_script() {
   HOME="$workdir/home" \
+    CALLBACK_URL="http://garm.invalid/api/v1/callbacks/status/" \
+    METADATA_URL="http://garm.invalid/api/v1/metadata/" \
+    BEARER_TOKEN="dry-run-test-token" \
     PATH="$workdir/bin:$PATH" \
     FAKE_CURL_FIXTURES="$scripts_dir/testdata/fixtures" \
     FAKE_CURL_CALLBACK_LOG="$workdir/callbacks.log" \

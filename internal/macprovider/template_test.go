@@ -1,10 +1,14 @@
 package macprovider
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cloudbase/garm-provider-common/cloudconfig"
 )
 
 // forbidden is the set of strings the rendered script must never contain. They
@@ -66,7 +70,7 @@ func TestTemplateRenderNonJIT(t *testing.T) {
 	for _, want := range []string{
 		"runner-registration-token",
 		"config.sh --unattended",
-		`--runnergroup "Default"`,
+		`--runnergroup "$GITHUB_RUNNER_GROUP"`,
 		`--no-default-labels`,
 		"./svc.sh install",
 		"./svc.sh start",
@@ -124,7 +128,7 @@ func TestTemplateCachedRunner(t *testing.T) {
 	for _, want := range []string{
 		`"$RUN_HOME/run.sh"`,
 		"using cached runner",
-		"downloading runner from",
+		"downloading runner",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render missing %q", want)
@@ -213,6 +217,162 @@ func assertForbidden(t *testing.T, out string) {
 		if strings.Contains(out, bad) {
 			t.Errorf("render contains forbidden string %q", bad)
 		}
+	}
+}
+
+// TestTemplateRendersHostileValuesSafely renders both variants with hostile
+// values in every template-context field and proves, for payloads carrying
+// $(), backticks, single/double quotes, a newline, % and unicode, that:
+//
+//	(a) the rendered script stays `bash -n` clean;
+//	(b) the payload cannot execute — a sandboxed run creates no marker file;
+//	(c) the secret context values never appear in the rendered script text.
+func TestTemplateRendersHostileValuesSafely(t *testing.T) {
+	// Arrange: one marker path that every payload aims `touch` at, so a single
+	// existence check proves no execution across all fields and both variants.
+	marker := filepath.Join(t.TempDir(), "pwned")
+
+	payloads := []struct {
+		name  string
+		value string
+	}{
+		{"command-substitution", "$(touch " + marker + ")"},
+		{"backtick", "`touch " + marker + "`"},
+		{"single-quote", "'; touch " + marker + "; #"},
+		{"double-quote", `"; touch ` + marker + `; #`},
+		{"newline", "x\ntouch " + marker},
+		{"percent", "100%$(touch " + marker + ")"},
+		{"unicode", "☃ $(touch " + marker + ")"},
+	}
+
+	fields := []struct {
+		name   string
+		secret bool
+		set    func(*cloudconfig.InstallRunnerParams, string)
+	}{
+		{"RunnerName", false, func(p *cloudconfig.InstallRunnerParams, v string) { p.RunnerName = v }},
+		{"RunnerLabels", false, func(p *cloudconfig.InstallRunnerParams, v string) { p.RunnerLabels = v }},
+		{"RepoURL", false, func(p *cloudconfig.InstallRunnerParams, v string) { p.RepoURL = v }},
+		{"DownloadURL", false, func(p *cloudconfig.InstallRunnerParams, v string) { p.DownloadURL = v }},
+		{"GitHubRunnerGroup", false, func(p *cloudconfig.InstallRunnerParams, v string) { p.GitHubRunnerGroup = v }},
+		{"CallbackURL", true, func(p *cloudconfig.InstallRunnerParams, v string) { p.CallbackURL = v }},
+		{"MetadataURL", true, func(p *cloudconfig.InstallRunnerParams, v string) { p.MetadataURL = v }},
+		{"CallbackToken", true, func(p *cloudconfig.InstallRunnerParams, v string) { p.CallbackToken = v }},
+	}
+
+	for _, jit := range []bool{true, false} {
+		for _, field := range fields {
+			for _, payload := range payloads {
+				name := fmt.Sprintf("%s/%s/%s", jitLabel(jit), field.name, payload.name)
+				t.Run(name, func(t *testing.T) {
+					// Arrange: the field under attack carries the hostile
+					// value; every other field keeps its benign example value.
+					params := ExampleParams(jit)
+					field.set(&params, payload.value)
+
+					// Act.
+					script, err := InstallRunnerScript(params)
+					if err != nil {
+						t.Fatalf("render: %v", err)
+					}
+					out := string(script)
+
+					// Assert (a): the hostile value must not break bash syntax.
+					assertBashSyntax(t, out)
+
+					if field.secret {
+						// Assert (c): secret fields are inherited from the
+						// environment, never rendered into the script text.
+						if strings.Contains(out, payload.value) {
+							t.Errorf("secret field %s value leaked into render", field.name)
+						}
+						if strings.Contains(out, marker) {
+							t.Errorf("secret field %s marker leaked into render", field.name)
+						}
+						return
+					}
+
+					// Positive control: the non-secret value is still rendered
+					// (into a quoted here-document), so the marker must appear
+					// in the output — otherwise the test is vacuous.
+					if !strings.Contains(out, marker) {
+						t.Fatalf("non-secret field %s marker not rendered (test is vacuous)", field.name)
+					}
+
+					// Assert (b): executing the rendered script must not create
+					// the marker — the value is literal data, not code.
+					assertNoMarkerExecution(t, out, marker)
+				})
+			}
+		}
+	}
+}
+
+// jitLabel names the template variant in a test name.
+func jitLabel(jit bool) string {
+	if jit {
+		return "jit"
+	}
+	return "nojit"
+}
+
+// assertNoMarkerExecution runs a rendered script in a sandbox — fake curl and
+// security, a cached run.sh so the download path is skipped, and the wrapper's
+// exported env vars — and fails if the hostile payload's marker file appears.
+// The script is expected to fail partway through the bootstrap (the fake curl
+// returns empty), so a non-zero exit is ignored; only marker creation matters.
+func assertNoMarkerExecution(t *testing.T, out, marker string) {
+	t.Helper()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	sbx := t.TempDir()
+	bin := filepath.Join(sbx, "bin")
+	home := filepath.Join(sbx, "home")
+	runHome := filepath.Join(home, "actions-runner")
+	for _, dir := range []string{bin, runHome} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	for _, tool := range []string{"curl", "security"} {
+		stub := filepath.Join(bin, tool)
+		if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("write %s stub: %v", tool, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(runHome, "run.sh"), nil, 0o755); err != nil {
+		t.Fatalf("write run.sh: %v", err)
+	}
+	script := filepath.Join(sbx, "macos-runner.sh")
+	if err := os.WriteFile(script, []byte(out), 0o700); err != nil {
+		t.Fatalf("write rendered script: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatalf("marker already exists before execution: %s", marker)
+	}
+
+	env := []string{
+		"HOME=" + home,
+		"PATH=" + bin + ":" + os.Getenv("PATH"),
+		"CALLBACK_URL=http://garm.invalid/api/v1/callbacks/status/",
+		"METADATA_URL=http://garm.invalid/api/v1/metadata/",
+		"BEARER_TOKEN=test-token",
+	}
+	for _, e := range os.Environ() {
+		name := e[:strings.IndexByte(e, '=')]
+		switch name {
+		case "HOME", "PATH", "CALLBACK_URL", "METADATA_URL", "BEARER_TOKEN":
+			continue
+		}
+		env = append(env, e)
+	}
+	cmd := exec.Command("bash", script)
+	cmd.Env = env
+	_ = cmd.Run()
+
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatalf("hostile value executed: marker %s was created", marker)
 	}
 }
 

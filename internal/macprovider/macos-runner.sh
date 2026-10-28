@@ -4,6 +4,17 @@
 # injects into extra_specs["runner_install_template"] fetches and runs it inside
 # the guest. It therefore runs as a plain script, not a cloud-init payload.
 #
+# GARM's renderer (text/template, no FuncMap) performs no shell escaping, so
+# this template never interpolates a context value into a shell-executed
+# position:
+#   * CALLBACK_URL, METADATA_URL and BEARER_TOKEN are inherited from the
+#     wrapper's environment, so the secrets never appear in the script text;
+#   * the remaining context values (RepoURL, DownloadURL, RunnerName,
+#     RunnerLabels, GitHubRunnerGroup) are read from quoted here-documents into
+#     shell variables and used only via double-quoted "$VAR" references. A
+#     quoted here-document delimiter suppresses all expansion, so $(),
+#     backticks, quotes, % and unicode in a value are literal data, not code.
+#
 # Constraints (macOS /bin/bash 3.2):
 #   * no associative arrays, no mapfile, no `sed -i` without a suffix;
 #   * the runner is supervised by launchd via ./svc.sh install|start (no
@@ -14,9 +25,47 @@ set -euo pipefail
 set -x
 {{- end }}
 
-CALLBACK_URL='{{ .CallbackURL }}'
-METADATA_URL='{{ .MetadataURL }}'
-BEARER_TOKEN='{{ .CallbackToken }}'
+# The wrapper GARM injects exports CALLBACK_URL, METADATA_URL and BEARER_TOKEN
+# into the guest; this script inherits them instead of re-rendering the secret
+# context values. Fail loudly before any use if a value is missing, so a
+# wrapper that did not export them surfaces an actionable error rather than an
+# unbound-variable crash or a silent empty URL.
+if [ -z "${CALLBACK_URL:-}" ]; then
+  echo "garm-macos-runner: CALLBACK_URL is not set in the environment; the GARM wrapper must export it" >&2
+  exit 1
+fi
+if [ -z "${METADATA_URL:-}" ]; then
+  echo "garm-macos-runner: METADATA_URL is not set in the environment; the GARM wrapper must export it" >&2
+  exit 1
+fi
+if [ -z "${BEARER_TOKEN:-}" ]; then
+  echo "garm-macos-runner: BEARER_TOKEN is not set in the environment; the GARM wrapper must export it" >&2
+  exit 1
+fi
+
+# Read the non-secret template context values from quoted here-documents. A
+# quoted delimiter suppresses all shell expansion inside the body, so a hostile
+# value cannot break out of its quoting context or execute: it is captured as
+# literal data. These fields are single-line (a URL, a name, comma-separated
+# labels, a group), so `read -r` takes the first line and any injected newline
+# stays inside the discarded here-document. The only escape is a value line
+# exactly equal to the delimiter below, which none of these fields can
+# legitimately contain.
+IFS= read -r REPO_URL <<'GARM_MACOS_EOV' || true
+{{ .RepoURL }}
+GARM_MACOS_EOV
+IFS= read -r DOWNLOAD_URL <<'GARM_MACOS_EOV' || true
+{{ .DownloadURL }}
+GARM_MACOS_EOV
+IFS= read -r RUNNER_NAME <<'GARM_MACOS_EOV' || true
+{{ .RunnerName }}
+GARM_MACOS_EOV
+IFS= read -r RUNNER_LABELS <<'GARM_MACOS_EOV' || true
+{{ .RunnerLabels }}
+GARM_MACOS_EOV
+IFS= read -r GITHUB_RUNNER_GROUP <<'GARM_MACOS_EOV' || true
+{{ .GitHubRunnerGroup }}
+GARM_MACOS_EOV
 
 # The actions-runner root lives under the runner user's home. The golden image
 # bakes the runner binary here so the download step can be skipped.
@@ -82,10 +131,10 @@ fetch_cred() {
 
 # download_runner fetches and extracts the runner archive.
 download_runner() {
-  send_status "downloading runner from {{ .DownloadURL }}"
+  send_status "downloading runner"
   mkdir -p "$RUN_HOME" || fail "failed to create $RUN_HOME"
   curl --retry 5 --retry-delay 5 --retry-connrefused --fail -sSL \
-    -o "$RUN_HOME/runner.tar.gz" '{{ .DownloadURL }}' \
+    -o "$RUN_HOME/runner.tar.gz" "$DOWNLOAD_URL" \
     || fail "failed to download runner archive"
   send_status "extracting runner"
   tar -xf "$RUN_HOME/runner.tar.gz" -C "$RUN_HOME" \
@@ -196,13 +245,13 @@ GITHUB_TOKEN=$(curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
 
 send_status "configuring runner"
 {{- if .GitHubRunnerGroup }}
-./config.sh --unattended --url '{{ .RepoURL }}' --token "$GITHUB_TOKEN" \
-  --runnergroup "{{ .GitHubRunnerGroup }}" --name "{{ .RunnerName }}" \
-  --labels "{{ .RunnerLabels }}" --no-default-labels --ephemeral \
+./config.sh --unattended --url "$REPO_URL" --token "$GITHUB_TOKEN" \
+  --runnergroup "$GITHUB_RUNNER_GROUP" --name "$RUNNER_NAME" \
+  --labels "$RUNNER_LABELS" --no-default-labels --ephemeral \
   || fail "failed to configure runner"
 {{- else }}
-./config.sh --unattended --url '{{ .RepoURL }}' --token "$GITHUB_TOKEN" \
-  --name "{{ .RunnerName }}" --labels "{{ .RunnerLabels }}" \
+./config.sh --unattended --url "$REPO_URL" --token "$GITHUB_TOKEN" \
+  --name "$RUNNER_NAME" --labels "$RUNNER_LABELS" \
   --no-default-labels --ephemeral \
   || fail "failed to configure runner"
 {{- end }}
