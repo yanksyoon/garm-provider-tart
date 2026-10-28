@@ -1,6 +1,7 @@
 package hostctl
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,16 +13,18 @@ import (
 
 // fakeTart is an in-memory Tart for precise control over each verb's outcome.
 type fakeTart struct {
-	mu         sync.Mutex
-	vms        map[string]VM
-	cloneErr   error
-	runErr     error
-	execErr    error
-	deleteErr  error
-	deleteNoop bool // when true, Delete returns nil without removing the VM
-	version    string
-	ip         string
-	clones     []string
+	mu          sync.Mutex
+	vms         map[string]VM
+	cloneErr    error
+	runErr      error
+	execErr     error
+	execHang    bool          // when true, Exec blocks until ctx is done
+	execEntered chan struct{} // when set, closed when Exec is entered
+	deleteErr   error
+	deleteNoop  bool // when true, Delete returns nil without removing the VM
+	version     string
+	ip          string
+	clones      []string
 }
 
 func newFakeTart() *fakeTart {
@@ -66,7 +69,18 @@ func (f *fakeTart) Run(name string) error {
 	return nil
 }
 func (f *fakeTart) IP(name string) (string, error) { return f.ip, nil }
-func (f *fakeTart) Exec(name string, stdin io.Reader, args ...string) error {
+func (f *fakeTart) Exec(ctx context.Context, name string, stdin io.Reader, args ...string) error {
+	if f.execEntered != nil {
+		select {
+		case <-f.execEntered:
+		default:
+			close(f.execEntered)
+		}
+	}
+	if f.execHang {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	return f.execErr
 }
 func (f *fakeTart) Stop(name string) error { return nil }
@@ -180,6 +194,61 @@ func TestCreateExecFailureStaysRunning(t *testing.T) {
 	}
 	if rec, _ := svc.reg.Load("garm-abc123"); rec.State != StateRunning {
 		t.Fatalf("persisted state = %s, want running", rec.State)
+	}
+}
+
+func TestCreateHungProbeReleasesFlock(t *testing.T) {
+	// Arrange: a tart whose exec blocks until ctx is done, a short probe
+	// timeout so the hang is bounded in the test, and a signal so the test
+	// knows the probe is under way (and the exclusive flock definitely held).
+	tart := newFakeTart()
+	tart.execHang = true
+	tart.execEntered = make(chan struct{})
+	svc := newTestService(t, tart)
+	svc.probeTimeout = 100 * time.Millisecond
+
+	// Act: create in the background; it holds the exclusive flock through the
+	// hung readiness probe until the host-side timeout fires.
+	createDone := make(chan struct{})
+	var createErr error
+	go func() {
+		_, createErr = svc.Create(createReq("garm-hang01"))
+		close(createDone)
+	}()
+	<-tart.execEntered // the probe is hung and the flock is held
+
+	// A concurrent get of another VM must complete in bounded time: it blocks
+	// only until the probe times out and releases the exclusive flock.
+	getDone := make(chan struct{})
+	go func() {
+		_, _ = svc.Get("garm-other")
+		close(getDone)
+	}()
+	select {
+	case <-getDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("concurrent get blocked: the hung readiness probe held the flock")
+	}
+
+	// Assert: create returned in bounded time, the record is running (never
+	// ready) with last_error, so the instance fails closed.
+	select {
+	case <-createDone:
+		if createErr != nil {
+			t.Fatalf("Create error = %v, want nil (caller decides)", createErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("create did not return after the probe timeout")
+	}
+	rec, err := svc.reg.Load("garm-hang01")
+	if err != nil {
+		t.Fatalf("record missing after create: %v", err)
+	}
+	if rec.State != StateRunning {
+		t.Fatalf("state = %s, want running", rec.State)
+	}
+	if rec.LastError == "" {
+		t.Fatal("last_error is empty, want the probe timeout error")
 	}
 }
 
@@ -658,5 +727,171 @@ func TestCreateIdempotentOnName(t *testing.T) {
 	}
 	if len(tart.clones) != 1 {
 		t.Fatalf("clones = %d, want 1", len(tart.clones))
+	}
+}
+
+func TestStaleRunningRecordReprobedToReady(t *testing.T) {
+	// Arrange: a running record whose readiness probe failed earlier and whose
+	// guest now answers, sitting past the stale-create TTL.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	svc.staleCreateTTL = time.Minute
+	now := time.Now()
+	svc.now = func() time.Time { return now }
+	tart.mu.Lock()
+	tart.vms["garm-stuck1"] = VM{Name: "garm-stuck1", State: "running"}
+	tart.mu.Unlock()
+	rec := Record{
+		Name:         "garm-stuck1",
+		ProviderID:   "mac-mini-01/garm-stuck1",
+		ControllerID: "controller-1",
+		State:        StateRunning,
+		LastError:    "guest agent not up",
+		CreatedAt:    now.Add(-2 * time.Hour),
+		UpdatedAt:    now.Add(-2 * time.Minute),
+	}
+	if err := svc.reg.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: reconcile.
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert: the record advanced to ready with last_error cleared.
+	got, err := svc.reg.Load("garm-stuck1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateReady {
+		t.Fatalf("state = %s, want ready", got.State)
+	}
+	if got.LastError != "" {
+		t.Fatalf("last_error = %q, want cleared", got.LastError)
+	}
+}
+
+func TestStaleRunningRecordReapedWhenProbeStillFails(t *testing.T) {
+	// Arrange: a running record past the TTL whose guest still does not answer.
+	tart := newFakeTart()
+	tart.execErr = fmt.Errorf("guest agent not responding")
+	svc := newTestService(t, tart)
+	svc.staleCreateTTL = time.Minute
+	now := time.Now()
+	svc.now = func() time.Time { return now }
+	tart.mu.Lock()
+	tart.vms["garm-stuck2"] = VM{Name: "garm-stuck2", State: "running"}
+	tart.mu.Unlock()
+	rec := Record{
+		Name:         "garm-stuck2",
+		ProviderID:   "mac-mini-01/garm-stuck2",
+		ControllerID: "controller-1",
+		State:        StateRunning,
+		CreatedAt:    now.Add(-2 * time.Hour),
+		UpdatedAt:    now.Add(-2 * time.Minute),
+	}
+	if err := svc.reg.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: reconcile.
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert: the record is reaped and the VM deleted.
+	if _, err := svc.reg.Load("garm-stuck2"); err != ErrNotFound {
+		t.Fatalf("record still present (err=%v), want reaped", err)
+	}
+	tart.mu.Lock()
+	_, present := tart.vms["garm-stuck2"]
+	tart.mu.Unlock()
+	if present {
+		t.Fatal("VM still present in tart list after reap")
+	}
+}
+
+func TestStaleCloningRecordReaped(t *testing.T) {
+	// Arrange: a cloning record past the TTL — a create killed mid-clone/set.
+	tart := newFakeTart()
+	svc := newTestService(t, tart)
+	svc.staleCreateTTL = time.Minute
+	now := time.Now()
+	svc.now = func() time.Time { return now }
+	tart.mu.Lock()
+	tart.vms["garm-stuck3"] = VM{Name: "garm-stuck3", State: "stopped"}
+	tart.mu.Unlock()
+	rec := Record{
+		Name:         "garm-stuck3",
+		ProviderID:   "mac-mini-01/garm-stuck3",
+		ControllerID: "controller-1",
+		State:        StateCloning,
+		CreatedAt:    now.Add(-2 * time.Hour),
+		UpdatedAt:    now.Add(-2 * time.Minute),
+	}
+	if err := svc.reg.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: reconcile.
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert: cloning has no resume path, so the record is reaped outright.
+	if _, err := svc.reg.Load("garm-stuck3"); err != ErrNotFound {
+		t.Fatalf("record still present (err=%v), want reaped", err)
+	}
+	tart.mu.Lock()
+	_, present := tart.vms["garm-stuck3"]
+	tart.mu.Unlock()
+	if present {
+		t.Fatal("VM still present in tart list after reap")
+	}
+}
+
+func TestFreshRunningRecordLeftAlone(t *testing.T) {
+	// Arrange: a running record younger than the stale-create TTL.
+	tart := newFakeTart()
+	tart.execErr = fmt.Errorf("guest agent not responding")
+	svc := newTestService(t, tart)
+	svc.staleCreateTTL = time.Minute
+	now := time.Now()
+	svc.now = func() time.Time { return now }
+	tart.mu.Lock()
+	tart.vms["garm-fresh1"] = VM{Name: "garm-fresh1", State: "running"}
+	tart.mu.Unlock()
+	rec := Record{
+		Name:         "garm-fresh1",
+		ProviderID:   "mac-mini-01/garm-fresh1",
+		ControllerID: "controller-1",
+		State:        StateRunning,
+		LastError:    "guest agent not up",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := svc.reg.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Act: reconcile.
+	if err := svc.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Assert: the record is untouched and the VM survives.
+	got, err := svc.reg.Load("garm-fresh1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateRunning {
+		t.Fatalf("state = %s, want running (left alone)", got.State)
+	}
+	tart.mu.Lock()
+	_, present := tart.vms["garm-fresh1"]
+	tart.mu.Unlock()
+	if !present {
+		t.Fatal("VM was deleted despite the record being fresh")
 	}
 }
