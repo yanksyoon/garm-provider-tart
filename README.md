@@ -45,7 +45,8 @@ cmd/tart-hostctl/         host-side control plane, installed at /usr/local/bin/t
 internal/hostctl/         registry, state machine, Tart verbs, adoption, locking
 internal/provider/        config, dispatch, operations, SSH transport
 testdata/bin/             stub tart and ssh binaries used by the tests
-scripts/mac/              fake-GARM conformance harness
+scripts/mac/              host bootstrap, image refresh, host check, fake-GARM harness
+docs/how-to/              operator runbooks (host preparation, ...)
 test/contract/            pinned GARM contract fixtures, replay + canary tests
 scripts/contract/         contract capture driver (builds upstream GARM and records the contract)
 ```
@@ -56,6 +57,10 @@ scripts/contract/         contract capture driver (builds upstream GARM and reco
 - Apple Silicon Mac minis running macOS 26, reachable over SSH.
 - `tart-hostctl` installed at `/usr/local/bin/tart-hostctl` on each host.
 - Tart, a golden image in an OCI registry, and an unlocked `login.keychain` on each host.
+
+Host preparation (user, Remote Login, auto-login, keychain daemon, power/update settings, Tart, golden
+image, prune timer) is a one-time privileged step: `scripts/mac/host-bootstrap.sh` (see
+`docs/how-to/macos-runner-host.md`). The provider never provisions hosts.
 
 ## Licence
 

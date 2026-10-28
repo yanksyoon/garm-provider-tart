@@ -57,3 +57,11 @@ jobs:
             exit 0
           fi
           npx --yes markdownlint-cli2 "${files[@]}"
+
+      - name: mac bootstrap self-test
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq
+          ./scripts/mac/test-bootstrap.sh
+          ./scripts/mac/test-image-refresh.sh
