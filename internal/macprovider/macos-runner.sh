@@ -131,6 +131,15 @@ extract_agent_id() {
   fi
 }
 
+# is_configured reports whether the runner is already configured in RUN_HOME,
+# mirroring the runner's own config.sh guard (Runner.Listener
+# ConfigurationManager.IsConfigured: a .runner / .runner_migrated file is
+# present). A runner that has been configured once must not be configured
+# again, so callers use this to short-circuit to "start the service".
+is_configured() {
+  [ -f "$RUN_HOME/.runner" ] || [ -f "$RUN_HOME/.runner_migrated" ]
+}
+
 # Resolve the runner binary: skip the download when the golden image already
 # ships run.sh (cache-friendly), otherwise fetch and extract it.
 if [ -f "$RUN_HOME/run.sh" ]; then
@@ -140,6 +149,21 @@ else
 fi
 
 cd "$RUN_HOME" || fail "failed to enter $RUN_HOME"
+
+# Idempotency: a second run on an already-configured runner must not
+# re-register (config.sh rejects "already configured") nor re-install the
+# launchd job (svc.sh install fails if the plist already exists). Detect the
+# configured state and just (re)start the service: launchctl load is a no-op
+# on an already-running service, so a stopped service is started and a running
+# one is left alone.
+if is_configured; then
+  send_status "runner already configured; starting service"
+  assert_keychain_unlocked
+  [ -f "$RUN_HOME/svc.sh" ] || fail "runner is configured but svc.sh is missing; re-provision the VM"
+  ./svc.sh start || fail "failed to start launchd service"
+  success "runner started" "$(extract_agent_id)"
+  exit 0
+fi
 
 {{- if .UseJITConfig }}
 send_status "downloading JIT credentials"

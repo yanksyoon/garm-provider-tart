@@ -152,6 +152,59 @@ func TestTemplatePinsLinux(t *testing.T) {
 	}
 }
 
+// TestTemplateRenderIdempotent asserts the rendered script carries the
+// "already configured" detection (requirement #8): a second run must detect
+// the configured state, skip registration/install, and only restart the
+// launchd service. Verified for both the JIT and non-JIT variants.
+func TestTemplateRenderIdempotent(t *testing.T) {
+	// Arrange: both template variants.
+	cases := []struct {
+		name string
+		jit  bool
+	}{
+		{"JIT", true},
+		{"non-JIT", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Act.
+			script, err := InstallRunnerScript(ExampleParams(tc.jit))
+			if err != nil {
+				t.Fatalf("render %s: %v", tc.name, err)
+			}
+			out := string(script)
+
+			// Assert: the idempotency guard and its "just start" branch are
+			// present, and the guard fires before any registration work.
+			for _, want := range []string{
+				"is_configured",
+				"runner already configured; starting service",
+				".runner_migrated",
+				"./svc.sh start",
+			} {
+				if !strings.Contains(out, want) {
+					t.Errorf("%s render missing idempotency marker %q", tc.name, want)
+				}
+			}
+			// The configured branch must exit before the JIT fetch / non-JIT
+			// config.sh registration, so the guard precedes them.
+			guard := strings.Index(out, "if is_configured; then")
+			if guard < 0 {
+				t.Fatalf("%s render missing is_configured branch", tc.name)
+			}
+			if tc.jit {
+				if !strings.Contains(out[guard:], "credentials/runner") {
+					t.Errorf("%s render: JIT credential fetch not gated after is_configured", tc.name)
+				}
+			} else if !strings.Contains(out[guard:], "config.sh --unattended") {
+				t.Errorf("%s render: config.sh not gated after is_configured", tc.name)
+			}
+			assertBashSyntax(t, out)
+		})
+	}
+}
+
 // assertForbidden fails the test if the rendered script contains any
 // Linux-only mechanism the macOS template must not emit.
 func assertForbidden(t *testing.T, out string) {
