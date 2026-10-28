@@ -217,6 +217,12 @@ cleanup() {
     printf '%s\n' "cleanup: removed image cache $HOME/.tart/cache/OCIs/github.com/cirruslabs"
   fi
 
+  # 4b. Remove any partial pull temp data left by an interrupted pull.
+  if [ -d "$HOME/.tart/tmp" ]; then
+    rm -rf "$HOME/.tart/tmp"
+    printf '%s\n' "cleanup: removed partial pull temp $HOME/.tart/tmp"
+  fi
+
   # 5. Report the post-cleanup state.
   printf '%s\n' "cleanup: tart list after:"
   "$TART_BIN" list 2>&1 || true
