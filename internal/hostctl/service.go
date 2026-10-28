@@ -127,11 +127,10 @@ func (s *Service) setDrained(d bool) error {
 }
 
 // Create implements the `create` verb. Under the exclusive lock it validates the
-// name and image, refuses on a locked keychain, drain or full host, then clones
-// (--stacked), labels the VM with this controller, sets resources, boots
-// headless and probes readiness with `tart exec true`. It returns the resulting
-// record; a failed readiness probe leaves the record in state `running` with
-// last_error so the caller can decide.
+// name and image, refuses on a locked keychain, drain or full host, then clones,
+// sets resources, boots headless and probes readiness with `tart exec true`. It
+// returns the resulting record; a failed readiness probe leaves the record in
+// state `running` with last_error so the caller can decide.
 func (s *Service) Create(req CreateRequest) (Instance, error) {
 	var result Instance
 	err := s.lock(true, func() error {
