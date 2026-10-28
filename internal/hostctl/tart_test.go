@@ -1,10 +1,12 @@
 package hostctl
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // tartStub returns the testdata/bin/tart stub path.
@@ -76,5 +78,31 @@ func TestRealTartRunUsesNoGraphics(t *testing.T) {
 	data, _ := os.ReadFile(logPath)
 	if !strings.Contains(string(data), "run --no-graphics garm-abc123") {
 		t.Fatalf("run argv = %q, want --no-graphics", string(data))
+	}
+}
+
+func TestRealTartExecBoundedOnHang(t *testing.T) {
+	// Arrange: a tart binary that hangs (a guest whose agent never answers),
+	// leaving an orphaned child that keeps the stdout/stderr pipe open, and a
+	// short context so the kill fires promptly.
+	hang := filepath.Join(t.TempDir(), "hang-tart")
+	if err := os.WriteFile(hang, []byte("#!/bin/sh\nsleep 300\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := NewRealTart(hang)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	// Act: exec true against the hung binary.
+	start := time.Now()
+	err := rt.Exec(ctx, "garm-abc123", nil, "true")
+
+	// Assert: it returns in bounded time (probe deadline + a short pipe wait),
+	// never blocks forever, and reports an error rather than success.
+	if err == nil {
+		t.Fatal("Exec error = nil, want a kill/timeout error")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("Exec took %s, want bounded (<= 5s)", d)
 	}
 }

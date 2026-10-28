@@ -2,12 +2,14 @@ package hostctl
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // VM is one entry of `tart list --format json`: the name, the raw Tart state
@@ -42,7 +44,7 @@ type Tart interface {
 	SetResources(name string, cpu, memoryMB, diskGB int) error
 	Run(name string) error
 	IP(name string) (string, error)
-	Exec(name string, stdin io.Reader, args ...string) error
+	Exec(ctx context.Context, name string, stdin io.Reader, args ...string) error
 	Stop(name string) error
 	Delete(name string) error
 	List() ([]VM, error)
@@ -126,10 +128,18 @@ func (t *RealTart) IP(name string) (string, error) {
 	return t.output("ip", "--wait", "60", name)
 }
 
-// Exec implements Tart.
-func (t *RealTart) Exec(name string, stdin io.Reader, args ...string) error {
+// Exec implements Tart. The context bounds the `tart exec` process: when ctx
+// is done the child is killed, so a guest whose agent never answers cannot pin
+// the host flock. Callers that do not need a bound (the bootstrap script runs
+// as long as the provider's ssh deadline allows) pass context.Background().
+func (t *RealTart) Exec(ctx context.Context, name string, stdin io.Reader, args ...string) error {
 	cmdArgs := append([]string{"exec", name, "--"}, args...)
-	cmd := exec.Command(t.TartBin, cmdArgs...)
+	cmd := exec.CommandContext(ctx, t.TartBin, cmdArgs...)
+	// WaitDelay bounds the wait for the command's I/O pipes after the context
+	// kills the process: a killed `tart exec` can leave orphaned children (the
+	// guest-side agent) holding stdout/stderr open, which would otherwise block
+	// Wait long after the probe deadline and keep the host flock held.
+	cmd.WaitDelay = 1 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stdin = stdin
 	cmd.Stdout = io.Discard
