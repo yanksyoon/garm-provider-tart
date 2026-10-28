@@ -13,8 +13,8 @@ const (
 	CommandGetInstance        = "GetInstance"
 	CommandListInstances      = "ListInstances"
 	CommandRemoveAllInstances = "RemoveAllInstances"
-	CommandStart              = "Start"
-	CommandStop               = "Stop"
+	CommandStart              = "StartInstance"
+	CommandStop               = "StopInstance"
 )
 
 // Exit codes: 0 success, 1 operation or configuration failure, 2 usage error.
@@ -32,7 +32,7 @@ GARM invokes this binary once per operation and selects it with GARM_COMMAND:
   ListInstances      print a JSON array for GARM_POOL_ID
   DeleteInstance     delete GARM_INSTANCE_ID (no-op when already gone)
   RemoveAllInstances delete every VM created by GARM_CONTROLLER_ID
-  Start, Stop        boot or shut down GARM_INSTANCE_ID
+  StartInstance, StopInstance  boot or shut down GARM_INSTANCE_ID
 
 Configuration comes from the TOML file in GARM_PROVIDER_CONFIG_FILE.
 `

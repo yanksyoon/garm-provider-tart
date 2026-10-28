@@ -1,0 +1,1 @@
+{"provider_id":"mac-mini-01/garm-contract-000","name":"garm-contract-000","os_type":"linux","os_name":"macos","os_version":"26","os_arch":"arm64","addresses":[{"address":"192.168.64.9","type":"private"}],"status":"running"}

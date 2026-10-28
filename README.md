@@ -46,6 +46,8 @@ internal/hostctl/         registry, state machine, Tart verbs, adoption, locking
 internal/provider/        config, dispatch, operations, SSH transport
 testdata/bin/             stub tart and ssh binaries used by the tests
 scripts/mac/              fake-GARM conformance harness
+test/contract/            pinned GARM contract fixtures, replay + canary tests
+scripts/contract/         contract capture driver (builds upstream GARM and records the contract)
 ```
 
 ## Requirements
@@ -66,6 +68,8 @@ go build ./... && go vet ./... && gofmt -l .
 go test -race ./internal/hostctl/... ./internal/provider/... -count=1
 go test -race ./internal/hostctl/... -run 'Concurrency|Crash|Adopt' -count=20
 make integration            # real GARM + fake hosts + Gitea (Docker; GARM_TEST_COMPOSE=podman-compose for rootless)
+make contract               # replay the pinned GARM contract + canary shape diff
+make contract-capture GARM_REF=<sha>   # regenerate the pinned contract fixtures
 shellcheck -S warning $(find scripts -name '*.sh' 2>/dev/null)
 npx --yes markdownlint-cli2 $(find . -name '*.md' -not -path './.git/*')
 ```
@@ -73,6 +77,14 @@ npx --yes markdownlint-cli2 $(find . -name '*.md' -not -path './.git/*')
 `make integration` drives a real GARM controller against the real provider binary, two fake hosts
 (real `tart-hostctl` + stub `tart` + real `sshd`) and a real Gitea forge, entirely on Docker — no Apple
 hardware, no GitHub tokens. See `test/integration/` and `.github/workflows/integration.yml`.
+
+`make contract` pins the GARM external-provider contract we do not own: the operation names, the env
+vars, the `BootstrapInstance` shape on stdin, and the `ProviderInstance` shape on stdout. `TestReplay`
+runs the provider against the captured fixtures and asserts the exit code, stdout JSON validity and
+every required field; `TestCanaryDrift` (driven nightly by `.github/workflows/contract-canary.yml`)
+builds GARM at `main`, re-captures, and diffs the shape against the pinned fixtures, failing with a
+readable diff on drift. Regenerate the pin after an intentional upstream change with
+`make contract-capture GARM_REF=<sha>`. See `test/contract/`.
 
 CI runs the same commands (`.github/workflows/ci.yml`, job `ci`). `main` is protected: every change lands
 through a pull request with a green `ci` check.
@@ -88,7 +100,7 @@ GARM execs the provider binary once per operation, with `GARM_COMMAND` selecting
 | `ListInstances` | JSON array (`[]` when empty) | fan-out lands in T5 |
 | `DeleteInstance` | nothing | no-op when the VM is already gone |
 | `RemoveAllInstances` | nothing | fan-out lands in T5 |
-| `Start`, `Stop` | nothing | arrive with the bootstrap template (T3) |
+| `StartInstance`, `StopInstance` | nothing | arrive with the bootstrap template (T3) |
 
 `provider_id` is `<host>/<vm-name>`. Diagnostics go to stderr; stdout carries JSON only.
 Exit codes: `0` success, `1` operation/configuration failure, `2` usage error.
