@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Stub id(1): `id <user>` succeeds iff the sysadminctl stub created the user;
+# `id -u` (no user) reports a non-zero uid so require_sudo takes the sudo path.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+if [ "$1" = "-u" ]; then
+  name="${2:-}"
+  if [ -n "$name" ]; then
+    if has "user.$name"; then echo "501"; exit 0; fi
+    echo "id: $name: no such user" >&2
+    exit 1
+  fi
+  echo "1000"
+  exit 0
+fi
+for a in "$@"; do
+  if has "user.$a"; then
+    echo "uid=501($a) gid=20(staff) groups=20(staff)"
+    exit 0
+  fi
+done
+echo "id: $*: no such user" >&2
+exit 1

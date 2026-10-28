@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Stub systemsetup: -getremotelogin reports the marker, -setremotelogin on sets it.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+case "$1" in
+  -getremotelogin)
+    if has systemsetup.remotelogin; then echo "Remote Login: On"; else echo "Remote Login: Off"; fi
+    ;;
+  -setremotelogin)
+    [ "$2" = "on" ] && mark systemsetup.remotelogin
+    ;;
+esac
+exit 0

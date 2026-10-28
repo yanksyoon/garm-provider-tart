@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Stub tart(1). Gate all verbs on the tart.installed marker so the bootstrap's
+# "install Tart" step has something to do; pull marks the image present; list
+# emits JSON reflecting the image marker and TART_STUB_RUNNING.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+if ! has tart.installed; then
+  echo "tart: command not found" >&2
+  exit 127
+fi
+case "$1" in
+  --version) echo "${TART_STUB_VERSION:-tart 2.20.0}" ;;
+  list)
+    out="["
+    if has tart.image; then
+      out="$out{\"Name\":\"${TART_STUB_IMAGE:-ghcr.io/cirruslabs/macos-tahoe-xcode:26}\",\"State\":\"stopped\",\"Size\":30000000000}"
+    fi
+    if [ "${TART_STUB_RUNNING:-0}" = "1" ]; then
+      [ "$out" != "[" ] && out="$out,"
+      out="$out{\"Name\":\"garm-abc123\",\"State\":\"running\",\"Size\":40000000000}"
+    fi
+    printf '%s\n' "$out]"
+    ;;
+  pull) mark tart.image ;;
+  prune)
+    if [ "$2" = "--entries" ] && [ "$3" = "vms" ]; then
+      echo "tart: refusing to prune VMs" >&2
+      exit 1
+    fi
+    mark tart.pruned
+    ;;
+  *)
+    echo "tart stub: unsupported: $*" >&2
+    exit 1
+    ;;
+esac

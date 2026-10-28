@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Stub sudo: exec the command unchanged (after logging), stripping -n. Set
+# STUB_SUDO_DENY=1 to simulate a host without passwordless sudo.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+if [ "${STUB_SUDO_DENY:-0}" = "1" ]; then
+  echo "sudo: a password is required" >&2
+  exit 1
+fi
+args=()
+for a in "$@"; do
+  [ "$a" = "-n" ] || [ "$a" = "--non-interactive" ] || args+=("$a")
+done
+exec "${args[@]}"

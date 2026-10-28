@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Stub pmset(1): -g prints the current power state; -a ... applies it.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+if [ "$1" = "-g" ]; then
+  printf ' sleep\t\t%s\n' "$(get pmset.sleep | sed 's/^$/1/')"
+  printf ' disablesleep\t%s\n' "$(get pmset.disablesleep | sed 's/^$/0/')"
+  exit 0
+fi
+shift # drop -a
+while [ $# -gt 0 ]; do
+  case "$1" in
+    sleep) put pmset.sleep "$2"; shift 2 ;;
+    disablesleep) put pmset.disablesleep "$2"; shift 2 ;;
+    autorestart) put pmset.autorestart "$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done

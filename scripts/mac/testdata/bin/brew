@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Stub brew(1): `install` marks tart as installed; --prefix echoes a path.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+case "$1" in
+  install) mark tart.installed ;;
+  --prefix) echo "/opt/homebrew" ;;
+esac
+exit 0
