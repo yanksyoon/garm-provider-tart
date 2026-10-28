@@ -54,7 +54,7 @@ post_status() {
   curl --retry 3 --retry-delay 2 --retry-connrefused --fail -s \
     -X POST -d "$payload" \
     -H 'Accept: application/json' \
-    -H "Authorization: Bearer ${BEARER_TOKEN}" \
+    -H "@$AUTH_HDR" \
     "${CALLBACK_URL}" >/dev/null 2>&1 || true
 }
 
@@ -68,16 +68,34 @@ fail() {
 
 success() { post_status "idle" "$1" "${2:-}"; }
 
+# auth_header_file writes the bearer Authorization header to a 0600 temp file
+# and echoes its path. curl reads a header from a file when the -H argument
+# starts with '@', so the instance token is passed to curl without ever
+# landing on a process command line (ps-visible). The file is removed on exit.
+auth_header_file() {
+  local hdr
+  hdr="$(mktemp "${TMPDIR:-/tmp}/garm-auth.XXXXXX")" \
+    || fail "failed to create bearer-header temp file"
+  printf 'Authorization: Bearer %s' "$BEARER_TOKEN" >"$hdr"
+  chmod 600 "$hdr"
+  printf '%s' "$hdr"
+}
+
 # fetch_cred downloads one JIT credential (or the service name) from the
 # metadata service and fails unless it is non-empty.
 fetch_cred() {
   local src="$1" dst="$2"
   curl --retry 5 --retry-delay 5 --retry-connrefused --fail -sS \
     -H 'Accept: application/json' \
-    -H "Authorization: Bearer ${BEARER_TOKEN}" \
+    -H "@$AUTH_HDR" \
     -o "$dst" "${METADATA_URL}${src}" \
     || fail "failed to fetch ${src} from metadata service"
   [ -s "$dst" ] || fail "metadata service returned an empty ${src}"
+  # The fetched file may carry the JIT RSA private key material; make it
+  # owner-only (0600) before anything else reads it. curl -o creates the file
+  # with the process umask (observed 0644/0664), so tighten it explicitly. The
+  # process runs as the runner user, so the owner is already correct.
+  chmod 600 "$dst" || fail "failed to chmod ${dst}"
 }
 
 # download_runner fetches and extracts the runner archive.
@@ -140,6 +158,18 @@ is_configured() {
   [ -f "$RUN_HOME/.runner" ] || [ -f "$RUN_HOME/.runner_migrated" ]
 }
 
+# Materialize the bearer Authorization header once into a 0600 temp file so
+# every curl call can pass it via `-H @file`; the instance token is then never
+# on a process command line. The EXIT trap removes it (and any registration
+# token file) when the script finishes.
+AUTH_HDR="$(auth_header_file)"
+REG_TOKEN_FILE=""
+cleanup() {
+  rm -f "$AUTH_HDR"
+  if [ -n "$REG_TOKEN_FILE" ]; then rm -f "$REG_TOKEN_FILE"; fi
+}
+trap cleanup EXIT
+
 # Resolve the runner binary: skip the download when the golden image already
 # ships run.sh (cache-friendly), otherwise fetch and extract it.
 if [ -f "$RUN_HOME/run.sh" ]; then
@@ -187,25 +217,36 @@ send_status "starting runner service"
 success "runner started"
 {{- else }}
 send_status "fetching runner registration token"
-GITHUB_TOKEN=$(curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
+REG_TOKEN_FILE="$(mktemp "${TMPDIR:-/tmp}/garm-regtoken.XXXXXX")" \
+  || fail "failed to create registration-token temp file"
+curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
   -H 'Accept: application/json' \
-  -H "Authorization: Bearer ${BEARER_TOKEN}" \
-  "${METADATA_URL}runner-registration-token/") \
+  -H "@$AUTH_HDR" \
+  -o "$REG_TOKEN_FILE" "${METADATA_URL}runner-registration-token/" \
   || fail "failed to fetch runner registration token"
-[ -n "$GITHUB_TOKEN" ] || fail "metadata service returned an empty registration token"
+[ -s "$REG_TOKEN_FILE" ] || fail "metadata service returned an empty registration token"
+chmod 600 "$REG_TOKEN_FILE"
 
 send_status "configuring runner"
 {{- if .GitHubRunnerGroup }}
-./config.sh --unattended --url '{{ .RepoURL }}' --token "$GITHUB_TOKEN" \
+./config.sh --unattended --url '{{ .RepoURL }}' --token "$(cat "$REG_TOKEN_FILE")" \
   --runnergroup "{{ .GitHubRunnerGroup }}" --name "{{ .RunnerName }}" \
   --labels "{{ .RunnerLabels }}" --no-default-labels --ephemeral \
   || fail "failed to configure runner"
 {{- else }}
-./config.sh --unattended --url '{{ .RepoURL }}' --token "$GITHUB_TOKEN" \
+./config.sh --unattended --url '{{ .RepoURL }}' --token "$(cat "$REG_TOKEN_FILE")" \
   --name "{{ .RunnerName }}" --labels "{{ .RunnerLabels }}" \
   --no-default-labels --ephemeral \
   || fail "failed to configure runner"
 {{- end }}
+
+# The registration token has served its single use; remove it at once so it
+# never lingers on disk. config.sh exposes the token via --token on its own
+# argv (the runner offers no token-file/stdin/env input), so that brief argv
+# window is a documented residual — the token is read from a 0600 file and
+# deleted immediately after, and the JIT path avoids it entirely.
+rm -f "$REG_TOKEN_FILE"
+REG_TOKEN_FILE=""
 
 assert_keychain_unlocked
 send_status "installing runner service"

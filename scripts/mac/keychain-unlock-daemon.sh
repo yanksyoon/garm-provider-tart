@@ -11,7 +11,8 @@
 #
 # Idempotent: a second run is a no-op and exits 0. --dry-run prints the action
 # and changes nothing. The password is never written anywhere: the daemon reads
-# it from a root-only 0600 file at load time (KEYCHAIN_PW_FILE).
+# it from a root-only 0600 file at load time (KEYCHAIN_PW_FILE) and passes it
+# to `security unlock-keychain` on stdin, never via the ps-visible `-p` flag.
 #
 # Usage:
 #   sudo scripts/mac/keychain-unlock-daemon.sh --runner-user garm
@@ -86,10 +87,13 @@ sudo install -d -m 755 "$(dirname "$WRAPPER_PATH")" || die "failed to create $(d
 sudo tee "$WRAPPER_PATH" >/dev/null <<EOF || die "failed to write $WRAPPER_PATH"
 #!/bin/bash
 # Unlock the login keychain at boot so macOS 15+ allows Tart to start VMs.
-# The password is read from $KEYCHAIN_PW_FILE (root-only, 0600) at load time.
+# The password is read from $KEYCHAIN_PW_FILE (root-only, 0600) at load time
+# and passed to security(1) on stdin. The -p flag is deliberately not used:
+# it puts the password on the security process command line, visible in ps.
+# security unlock-keychain reads the password from stdin when -p is omitted.
 set -euo pipefail
 pw="\$(cat '$KEYCHAIN_PW_FILE')"
-security unlock-keychain -p "\$pw" '$KEYCHAIN_PATH'
+printf '%s\n' "\$pw" | security unlock-keychain '$KEYCHAIN_PATH'
 EOF
 sudo chmod 700 "$WRAPPER_PATH" || die "failed to chmod $WRAPPER_PATH"
 

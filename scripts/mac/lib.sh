@@ -141,7 +141,11 @@ check_user() {
 }
 
 check_remote_login() {
-  sudo -n systemsetup -getremotelogin 2>/dev/null | grep -q "Remote Login: On"
+  sudo -n systemsetup -getremotelogin 2>/dev/null | grep -q "Remote Login: On" || return 1
+  # SSH must be restricted to garm via com.apple.access_ssh, not open to every
+  # local user. checkmember prints "yes ... is a member of ..." when garm is in
+  # the group; an absent group or missing membership prints "no".
+  sudo -n dseditgroup -o checkmember -m "$GARM_USER" com.apple.access_ssh 2>/dev/null | grep -q "is a member of"
 }
 
 check_auto_login() {

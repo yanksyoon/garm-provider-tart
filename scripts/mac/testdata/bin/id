@@ -3,6 +3,12 @@
 # `id -u` (no user) reports a non-zero uid so require_sudo takes the sudo path.
 . "$(dirname "$0")/_stub.sh"
 stub_log "$@"
+if [ "$1" = "-un" ]; then
+  # The operator (admin) user the bootstrap runs as; used to keep SSH access
+  # for the operator when Remote Login is restricted to garm.
+  echo "${GARM_OPERATOR_STUB:-admin}"
+  exit 0
+fi
 if [ "$1" = "-u" ]; then
   name="${2:-}"
   if [ -n "$name" ]; then

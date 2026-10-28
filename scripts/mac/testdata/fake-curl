@@ -9,10 +9,17 @@
 #   FAKE_CURL_FIXTURES      directory holding the fixture files
 #                           (default: ../testdata/fixtures relative to this file)
 #   FAKE_CURL_CALLBACK_LOG  file to append recorded status-callback bodies to
+#   FAKE_CURL_ARGV_LOG      file to append the full argv of every invocation to
+#                           (used to prove the bearer token never reaches argv)
 set -euo pipefail
 
 fixtures="${FAKE_CURL_FIXTURES:-$(cd "$(dirname "${BASH_SOURCE[0]}")/fixtures" && pwd)}"
 callback_log="${FAKE_CURL_CALLBACK_LOG:-/dev/null}"
+argv_log="${FAKE_CURL_ARGV_LOG:-/dev/null}"
+
+if [ "$argv_log" != "/dev/null" ]; then
+  printf '%s\n' "$*" >> "$argv_log"
+fi
 
 url=""
 out=""
