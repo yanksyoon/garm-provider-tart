@@ -1,0 +1,80 @@
+#!/bin/sh
+# Stub `curl` for the bash32 lane. Serves GARM metadata fixtures and records
+# status callbacks; it never touches the network. A real `curl --fail` exits
+# 22 on any HTTP >= 400, so this stub exits 22 to model a 401/404.
+#
+# Env:
+#   CURL_STUB_METADATA_URL     prefix for metadata GETs (default http://metadata.invalid)
+#   CURL_STUB_CALLBACK_URL     prefix for status POSTs (default http://callback.invalid)
+#   CURL_STUB_DOWNLOAD_URL     full runner download URL
+#   CURL_STUB_FIXTURES         dir holding metadata fixtures (credentials/runner, ...)
+#   CURL_STUB_RUNNER_TARBALL   tarball served for the download URL
+#   CURL_STUB_META_STATUS      force this HTTP status on every metadata GET (401/404/...)
+#   CURL_STUB_CALLBACK_LOG     append callback payloads here
+#   CURL_STUB_LOG              append full argv here (debug)
+set -u
+
+MD="${CURL_STUB_METADATA_URL:-http://metadata.invalid}"
+DL="${CURL_STUB_DOWNLOAD_URL:-https://downloads.example.invalid/runner.tar.gz}"
+FIX="${CURL_STUB_FIXTURES:-}"
+
+log() { printf '%s\n' "$*" >> "${CURL_STUB_LOG:-/dev/null}"; }
+log "curl $*"
+
+method="GET"
+out=""
+url=""
+payload=""
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-X|--request) method="$2"; shift 2 ;;
+		-d|--data)    payload="$2"; shift 2 ;;
+		-o|--output)  out="$2"; shift 2 ;;
+		-H|--header)  shift 2 ;;
+		--retry|--retry-delay) shift 2 ;;
+		--retry-connrefused|--fail|-s|-L|-f|--location|--fail-with-body) shift ;;
+		*) url="$1"; shift ;;
+	esac
+done
+
+# Status callback: record the payload and report success.
+case "$method" in
+	POST)
+		printf '%s\n' "$payload" >> "${CURL_STUB_CALLBACK_LOG:-/dev/null}"
+		exit 0
+		;;
+esac
+
+# Runner download.
+if [ "$url" = "$DL" ]; then
+	if [ -n "${CURL_STUB_RUNNER_TARBALL:-}" ] && [ -f "$CURL_STUB_RUNNER_TARBALL" ]; then
+		if [ -n "$out" ]; then cp "$CURL_STUB_RUNNER_TARBALL" "$out"; else cat "$CURL_STUB_RUNNER_TARBALL"; fi
+		exit 0
+	fi
+	echo "curl stub: no runner tarball for $url" >&2
+	exit 22
+fi
+
+# Metadata GET.
+case "$url" in
+	"$MD"/*)
+		rel=${url#"$MD"/}
+		rel=${rel%/}
+		if [ -n "${CURL_STUB_META_STATUS:-}" ]; then
+			echo "curl stub: forced ${CURL_STUB_META_STATUS} for $rel" >&2
+			exit 22
+		fi
+		f="$FIX/$rel"
+		if [ -f "$f" ]; then
+			if [ -n "$out" ]; then cp "$f" "$out"; else cat "$f"; fi
+			exit 0
+		fi
+		echo "curl stub: 404 for $rel" >&2
+		exit 22
+		;;
+esac
+
+# Anything else (including the callback URL reached via GET) is unexpected.
+echo "curl stub: unexpected URL $url" >&2
+exit 22

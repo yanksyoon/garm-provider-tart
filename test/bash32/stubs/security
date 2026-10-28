@@ -1,0 +1,14 @@
+#!/bin/sh
+# Stub `security` for the bash32 lane. Models the login keychain state:
+#   SECURITY_STUB_LOCKED=1  -> unlock-keychain fails (locked keychain)
+#   otherwise               -> unlock-keychain succeeds (already unlocked)
+set -u
+
+log() { printf '%s\n' "$*" >> "${SECURITY_STUB_LOG:-/dev/null}"; }
+log "security $*"
+
+if [ "${SECURITY_STUB_LOCKED:-0}" = "1" ]; then
+	echo "security: SecKeychainUnlock returned -25291 (keychain is locked)" >&2
+	exit 1
+fi
+exit 0
