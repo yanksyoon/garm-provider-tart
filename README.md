@@ -70,6 +70,7 @@ go test -race ./internal/hostctl/... -run 'Concurrency|Crash|Adopt' -count=20
 make integration            # real GARM + fake hosts + Gitea (Docker; GARM_TEST_COMPOSE=podman-compose for rootless)
 make contract               # replay the pinned GARM contract + canary shape diff
 make contract-capture GARM_REF=<sha>   # regenerate the pinned contract fixtures
+make test-bash32            # render + run the macOS template under source-built bash 3.2 (Docker; CONTAINER_RUNTIME=podman for rootless)
 shellcheck -S warning $(find scripts -name '*.sh' 2>/dev/null)
 npx --yes markdownlint-cli2 $(find . -name '*.md' -not -path './.git/*')
 ```
@@ -85,6 +86,13 @@ every required field; `TestCanaryDrift` (driven nightly by `.github/workflows/co
 builds GARM at `main`, re-captures, and diffs the shape against the pinned fixtures, failing with a
 readable diff on drift. Regenerate the pin after an intentional upstream change with
 `make contract-capture GARM_REF=<sha>`. See `test/contract/`.
+
+`make test-bash32` renders the macOS runner-install template exactly as GARM does
+(`cloudconfig.InstallRunnerScript`) and runs it under a source-built bash 3.2 in a container, so the
+template is proven against macOS's exact bash language level without a Mac. The image's `bash` is
+checked to be exactly 3.2.x before any test runs, and the lane exercises the JIT and non-JIT branches
+plus the failure paths (401 metadata, missing credentials, locked keychain, missing `svc.sh`) against
+fake `curl`/`launchctl`/`security` stubs. See `test/bash32/` and the `bash32-template` CI job.
 
 CI runs the same commands (`.github/workflows/ci.yml`, job `ci`). `main` is protected: every change lands
 through a pull request with a green `ci` check.

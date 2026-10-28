@@ -29,3 +29,14 @@ contract:
 contract-capture:
 	@test -n "$(GARM_REF)" || { echo "GARM_REF is required: make contract-capture GARM_REF=<sha>" >&2; exit 2; }
 	./scripts/contract/capture.sh "$(GARM_REF)" "$(CURDIR)/test/contract/fixtures/$(GARM_REF)"
+
+# test-bash32 renders the macOS runner-install template exactly as GARM does
+# and runs it under a source-built bash 3.2 in a container (no Mac, no network
+# at run time). The image is built in CI and cached; the run refuses to start
+# unless the image's bash is exactly 3.2.x. Requires a container runtime —
+# set CONTAINER_RUNTIME=podman for a rootless local run.
+CONTAINER_RUNTIME ?= docker
+.PHONY: test-bash32
+test-bash32:
+	$(CONTAINER_RUNTIME) build -t garm-provider-tart:bash32 -f test/bash32/Dockerfile .
+	$(CONTAINER_RUNTIME) run --rm garm-provider-tart:bash32

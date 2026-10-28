@@ -1,0 +1,12 @@
+#!/bin/sh
+# Stub `launchctl` for the bash32 lane. `list <label>` reports the service as
+# loaded (exit 0); any other verb is a no-op success.
+set -u
+
+log() { printf '%s\n' "$*" >> "${LAUNCHCTL_STUB_LOG:-/dev/null}"; }
+log "launchctl $*"
+
+if [ "${LAUNCHCTL_STUB_FAIL:-0}" = "1" ]; then
+	exit 1
+fi
+exit 0
