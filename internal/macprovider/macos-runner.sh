@@ -6,14 +6,12 @@
 #
 # GARM's renderer (text/template, no FuncMap) performs no shell escaping, so
 # this template never interpolates a context value into a shell-executed
-# position:
-#   * CALLBACK_URL, METADATA_URL and BEARER_TOKEN are inherited from the
-#     wrapper's environment, so the secrets never appear in the script text;
-#   * the remaining context values (RepoURL, DownloadURL, RunnerName,
-#     RunnerLabels, GitHubRunnerGroup) are read from quoted here-documents into
-#     shell variables and used only via double-quoted "$VAR" references. A
-#     quoted here-document delimiter suppresses all expansion, so $(),
-#     backticks, quotes, % and unicode in a value are literal data, not code.
+# position. Every context value — RepoURL, DownloadURL, RunnerName,
+# RunnerLabels, GitHubRunnerGroup, CallbackURL, MetadataURL, CallbackToken — is
+# read from a quoted here-document into a shell variable and used only via
+# double-quoted "$VAR" references. A quoted here-document delimiter suppresses
+# all expansion, so $(), backticks, quotes, % and unicode in a value are
+# literal data, not code.
 #
 # Constraints (macOS /bin/bash 3.2):
 #   * no associative arrays, no mapfile, no `sed -i` without a suffix;
@@ -25,32 +23,27 @@ set -euo pipefail
 set -x
 {{- end }}
 
-# The wrapper GARM injects exports CALLBACK_URL, METADATA_URL and BEARER_TOKEN
-# into the guest; this script inherits them instead of re-rendering the secret
-# context values. Fail loudly before any use if a value is missing, so a
-# wrapper that did not export them surfaces an actionable error rather than an
-# unbound-variable crash or a silent empty URL.
-if [ -z "${CALLBACK_URL:-}" ]; then
-  echo "garm-macos-runner: CALLBACK_URL is not set in the environment; the GARM wrapper must export it" >&2
-  exit 1
-fi
-if [ -z "${METADATA_URL:-}" ]; then
-  echo "garm-macos-runner: METADATA_URL is not set in the environment; the GARM wrapper must export it" >&2
-  exit 1
-fi
-if [ -z "${BEARER_TOKEN:-}" ]; then
-  echo "garm-macos-runner: BEARER_TOKEN is not set in the environment; the GARM wrapper must export it" >&2
-  exit 1
-fi
-
-# Read the non-secret template context values from quoted here-documents. A
-# quoted delimiter suppresses all shell expansion inside the body, so a hostile
-# value cannot break out of its quoting context or execute: it is captured as
-# literal data. These fields are single-line (a URL, a name, comma-separated
-# labels, a group), so `read -r` takes the first line and any injected newline
-# stays inside the discarded here-document. The only escape is a value line
-# exactly equal to the delimiter below, which none of these fields can
-# legitimately contain.
+# Read every template context value from a quoted here-document. A quoted
+# delimiter suppresses all shell expansion inside the body, so a hostile value
+# cannot break out of its quoting context or execute: it is captured as literal
+# data, then used only via double-quoted "$VAR" references. The three secrets
+# (CallbackURL, MetadataURL, CallbackToken) are rendered here rather than
+# inherited from the environment: GARM's injected wrapper (linux_wrapper.tmpl)
+# assigns CALLBACK_URL/METADATA_URL/BEARER_TOKEN without `export` and runs this
+# install script as a child process, so those variables never reach it.
+# These fields are single-line (a URL, a name, comma-separated labels, a group),
+# so `read -r` takes the first line and any injected newline stays inside the
+# discarded here-document. The only escape is a value line exactly equal to the
+# delimiter below, which none of these fields can legitimately contain.
+IFS= read -r CALLBACK_URL <<'GARM_MACOS_EOV' || true
+{{ .CallbackURL }}
+GARM_MACOS_EOV
+IFS= read -r METADATA_URL <<'GARM_MACOS_EOV' || true
+{{ .MetadataURL }}
+GARM_MACOS_EOV
+IFS= read -r BEARER_TOKEN <<'GARM_MACOS_EOV' || true
+{{ .CallbackToken }}
+GARM_MACOS_EOV
 IFS= read -r REPO_URL <<'GARM_MACOS_EOV' || true
 {{ .RepoURL }}
 GARM_MACOS_EOV
@@ -66,6 +59,13 @@ GARM_MACOS_EOV
 IFS= read -r GITHUB_RUNNER_GROUP <<'GARM_MACOS_EOV' || true
 {{ .GitHubRunnerGroup }}
 GARM_MACOS_EOV
+
+# Fail loudly before any use if a required value is empty. GARM always supplies
+# these context values, so an empty one means a broken template or render;
+# surfacing it here beats a confusing curl/config.sh failure later.
+[ -n "$CALLBACK_URL" ] || { echo "garm-macos-runner: CALLBACK_URL is empty (missing .CallbackURL in the template context)" >&2; exit 1; }
+[ -n "$METADATA_URL" ] || { echo "garm-macos-runner: METADATA_URL is empty (missing .MetadataURL in the template context)" >&2; exit 1; }
+[ -n "$BEARER_TOKEN" ] || { echo "garm-macos-runner: BEARER_TOKEN is empty (missing .CallbackToken in the template context)" >&2; exit 1; }
 
 # The actions-runner root lives under the runner user's home. The golden image
 # bakes the runner binary here so the download step can be skipped.

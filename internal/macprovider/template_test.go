@@ -226,7 +226,12 @@ func assertForbidden(t *testing.T, out string) {
 //
 //	(a) the rendered script stays `bash -n` clean;
 //	(b) the payload cannot execute — a sandboxed run creates no marker file;
-//	(c) the secret context values never appear in the rendered script text.
+//	(c) the script is self-contained: it reads every value (including the
+//	    three secrets) from its own quoted here-documents, so the sandbox
+//	    supplies no CALLBACK_URL/METADATA_URL/BEARER_TOKEN environment
+//	    variables and the empty-value guard never fires. The secret values
+//	    therefore appear in the render only as inert here-document data, never
+//	    in a shell-executed position.
 func TestTemplateRendersHostileValuesSafely(t *testing.T) {
 	// Arrange: one marker path that every payload aims `touch` at, so a single
 	// existence check proves no execution across all fields and both variants.
@@ -246,18 +251,17 @@ func TestTemplateRendersHostileValuesSafely(t *testing.T) {
 	}
 
 	fields := []struct {
-		name   string
-		secret bool
-		set    func(*cloudconfig.InstallRunnerParams, string)
+		name string
+		set  func(*cloudconfig.InstallRunnerParams, string)
 	}{
-		{"RunnerName", false, func(p *cloudconfig.InstallRunnerParams, v string) { p.RunnerName = v }},
-		{"RunnerLabels", false, func(p *cloudconfig.InstallRunnerParams, v string) { p.RunnerLabels = v }},
-		{"RepoURL", false, func(p *cloudconfig.InstallRunnerParams, v string) { p.RepoURL = v }},
-		{"DownloadURL", false, func(p *cloudconfig.InstallRunnerParams, v string) { p.DownloadURL = v }},
-		{"GitHubRunnerGroup", false, func(p *cloudconfig.InstallRunnerParams, v string) { p.GitHubRunnerGroup = v }},
-		{"CallbackURL", true, func(p *cloudconfig.InstallRunnerParams, v string) { p.CallbackURL = v }},
-		{"MetadataURL", true, func(p *cloudconfig.InstallRunnerParams, v string) { p.MetadataURL = v }},
-		{"CallbackToken", true, func(p *cloudconfig.InstallRunnerParams, v string) { p.CallbackToken = v }},
+		{"RunnerName", func(p *cloudconfig.InstallRunnerParams, v string) { p.RunnerName = v }},
+		{"RunnerLabels", func(p *cloudconfig.InstallRunnerParams, v string) { p.RunnerLabels = v }},
+		{"RepoURL", func(p *cloudconfig.InstallRunnerParams, v string) { p.RepoURL = v }},
+		{"DownloadURL", func(p *cloudconfig.InstallRunnerParams, v string) { p.DownloadURL = v }},
+		{"GitHubRunnerGroup", func(p *cloudconfig.InstallRunnerParams, v string) { p.GitHubRunnerGroup = v }},
+		{"CallbackURL", func(p *cloudconfig.InstallRunnerParams, v string) { p.CallbackURL = v }},
+		{"MetadataURL", func(p *cloudconfig.InstallRunnerParams, v string) { p.MetadataURL = v }},
+		{"CallbackToken", func(p *cloudconfig.InstallRunnerParams, v string) { p.CallbackToken = v }},
 	}
 
 	for _, jit := range []bool{true, false} {
@@ -280,23 +284,11 @@ func TestTemplateRendersHostileValuesSafely(t *testing.T) {
 					// Assert (a): the hostile value must not break bash syntax.
 					assertBashSyntax(t, out)
 
-					if field.secret {
-						// Assert (c): secret fields are inherited from the
-						// environment, never rendered into the script text.
-						if strings.Contains(out, payload.value) {
-							t.Errorf("secret field %s value leaked into render", field.name)
-						}
-						if strings.Contains(out, marker) {
-							t.Errorf("secret field %s marker leaked into render", field.name)
-						}
-						return
-					}
-
-					// Positive control: the non-secret value is still rendered
-					// (into a quoted here-document), so the marker must appear
-					// in the output — otherwise the test is vacuous.
+					// Positive control: the value is still rendered into a
+					// quoted here-document, so the marker must appear in the
+					// output — otherwise the test is vacuous.
 					if !strings.Contains(out, marker) {
-						t.Fatalf("non-secret field %s marker not rendered (test is vacuous)", field.name)
+						t.Fatalf("field %s marker not rendered (test is vacuous)", field.name)
 					}
 
 					// Assert (b): executing the rendered script must not create
@@ -317,10 +309,14 @@ func jitLabel(jit bool) string {
 }
 
 // assertNoMarkerExecution runs a rendered script in a sandbox — fake curl and
-// security, a cached run.sh so the download path is skipped, and the wrapper's
-// exported env vars — and fails if the hostile payload's marker file appears.
-// The script is expected to fail partway through the bootstrap (the fake curl
-// returns empty), so a non-zero exit is ignored; only marker creation matters.
+// security, and a cached run.sh so the download path is skipped — and fails if
+// the hostile payload's marker file appears. The sandbox supplies no
+// CALLBACK_URL/METADATA_URL/BEARER_TOKEN environment variables (GARM's wrapper
+// assigns them without `export`, so they never reach this child script), so
+// the rendered script must be self-contained, reading those values from its
+// own here-documents. The script is expected to fail partway through the
+// bootstrap (the fake curl returns empty), so a non-zero exit is ignored; only
+// marker creation and the empty-value guard firing matter.
 func assertNoMarkerExecution(t *testing.T, out, marker string) {
 	t.Helper()
 	if _, err := exec.LookPath("bash"); err != nil {
@@ -352,12 +348,12 @@ func assertNoMarkerExecution(t *testing.T, out, marker string) {
 		t.Fatalf("marker already exists before execution: %s", marker)
 	}
 
+	// Build a minimal environment. The three GARM-supplied secrets are
+	// deliberately NOT exported here: if the template regresses to
+	// env-inheritance, the empty-value guard fires and the test fails below.
 	env := []string{
 		"HOME=" + home,
 		"PATH=" + bin + ":" + os.Getenv("PATH"),
-		"CALLBACK_URL=http://garm.invalid/api/v1/callbacks/status/",
-		"METADATA_URL=http://garm.invalid/api/v1/metadata/",
-		"BEARER_TOKEN=test-token",
 	}
 	for _, e := range os.Environ() {
 		name := e[:strings.IndexByte(e, '=')]
@@ -369,10 +365,22 @@ func assertNoMarkerExecution(t *testing.T, out, marker string) {
 	}
 	cmd := exec.Command("bash", script)
 	cmd.Env = env
-	_ = cmd.Run()
+	combined, _ := cmd.CombinedOutput()
 
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatalf("hostile value executed: marker %s was created", marker)
+	}
+	// The script must be self-contained: with no CALLBACK_URL/METADATA_URL/
+	// BEARER_TOKEN in the environment, the values read from the here-documents
+	// satisfy the non-empty guard, so none of its failure messages may appear.
+	for _, guard := range []string{
+		"CALLBACK_URL is empty",
+		"METADATA_URL is empty",
+		"BEARER_TOKEN is empty",
+	} {
+		if strings.Contains(string(combined), guard) {
+			t.Fatalf("rendered script is not self-contained: guard fired (%q):\n%s", guard, combined)
+		}
 	}
 }
 
