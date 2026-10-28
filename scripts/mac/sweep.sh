@@ -2,7 +2,9 @@
 # Host-side reaper for the Tart fleet. Run periodically (launchd/cron) as root.
 #
 # 1. `status` triggers Reconcile, which reaps quarantined VMs past their TTL,
-#    drops records whose VM vanished, and adopts/quarantines unrecorded VMs.
+#    drops records whose VM vanished, reclaims cloning/running records stranded
+#    by a crashed create past the stale-create TTL, and adopts/quarantines
+#    unrecorded VMs.
 # 2. Complete `deleting` tombstones whose VM is already gone by re-invoking
 #    `delete`, which proves release (absent from `tart list`) and frees the slot.
 #
