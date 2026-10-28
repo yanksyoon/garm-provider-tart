@@ -25,8 +25,13 @@
 # blob is generated from the password, never the plaintext.
 #
 # Usage:
-#   sudo scripts/mac/host-bootstrap.sh            # apply everything
-#   scripts/mac/host-bootstrap.sh --dry-run       # print actions, change nothing
+#   scripts/mac/host-bootstrap.sh            # apply everything (as the admin user)
+#   scripts/mac/host-bootstrap.sh --dry-run  # print actions, change nothing
+#
+# Run as the admin user with passwordless sudo — NOT under `sudo`. Homebrew
+# refuses to run as root, and root's default PATH omits /opt/homebrew/bin, so a
+# root shell breaks the unprivileged Tart install. Privileged steps use sudo
+# internally (require_sudo).
 #
 # Configuration is via environment variables; see scripts/mac/lib.sh.
 set -euo pipefail
@@ -64,6 +69,7 @@ done
 # --- apply functions (each guarded, each names its step on failure) ---------
 
 apply_user() {
+  local tmp
   require_sudo "user"
   [ -r "$GARM_SSH_KEY" ] || die "user: SSH public key not found at $GARM_SSH_KEY (it is referenced by path, not embedded)"
   if ! id "$GARM_USER" >/dev/null 2>&1; then
@@ -72,8 +78,16 @@ apply_user() {
   fi
   sudo install -d -m 700 -o "$GARM_USER" -g staff "$GARM_HOME/.ssh" \
     || die "user: failed to create $GARM_HOME/.ssh"
-  sudo install -m 600 -o "$GARM_USER" -g staff "$GARM_SSH_KEY" "$AUTH_KEYS" \
-    || die "user: failed to install authorized key"
+  # Append the controller key only when the exact line is absent. authorized_keys
+  # is read-modify-written via a temp file, never replaced, so any pre-existing
+  # keys survive (attack #4: no destructive scope).
+  if ! sudo -n grep -qxF "$(cat "$GARM_SSH_KEY")" "$AUTH_KEYS" 2>/dev/null; then
+    tmp="$(mktemp)"
+    { sudo -n cat "$AUTH_KEYS" 2>/dev/null || :; cat "$GARM_SSH_KEY"; } >"$tmp"
+    sudo install -m 600 -o "$GARM_USER" -g staff "$tmp" "$AUTH_KEYS" \
+      || { rm -f "$tmp"; die "user: failed to install authorized key"; }
+    rm -f "$tmp"
+  fi
 }
 
 apply_remote_login() {
@@ -125,8 +139,9 @@ apply_updates() {
 }
 
 apply_tart() {
-  command -v brew >/dev/null 2>&1 || die "tart: Homebrew not found on PATH (install Homebrew first, then re-run)"
-  brew install openai/tools/tart >/dev/null || die "tart: Homebrew failed to install Tart"
+  local brew_bin
+  brew_bin="$(resolve_bin brew)" || die "tart: Homebrew not found (install Homebrew first, then re-run)"
+  "$brew_bin" install openai/tools/tart >/dev/null || die "tart: Homebrew failed to install Tart"
 }
 
 apply_image() {
@@ -137,7 +152,7 @@ apply_image() {
 apply_prune_timer() {
   require_sudo "prune_timer"
   local tart_bin plist
-  tart_bin="$(command -v tart || echo /usr/local/bin/tart)"
+  tart_bin="$(resolve_bin tart)" || die "prune_timer: tart not found (install Tart first)"
   plist="$LAUNCHD_DIR/$PRUNE_DAEMON_LABEL.plist"
   sudo install -d -m 755 "$LAUNCHD_DIR" || die "prune_timer: failed to create $LAUNCHD_DIR"
   sudo tee "$plist" >/dev/null <<EOF || die "prune_timer: failed to write $plist"

@@ -14,7 +14,7 @@ fails loudly otherwise. This page is the operator runbook; the design reference 
 | Network | Wired Ethernet, static IP or DHCP reservation, reachable from the GARM controller on TCP 22 |
 | Outbound | HTTPS to `github.com`, `ghcr.io`, and the GARM callback/metadata URLs |
 | Disk | ≥ 25 GB per golden image plus ~40 GB per live VM; keep 20 % free |
-| Tooling | Homebrew installed; `sudo` access (run the scripts as root or with passwordless sudo) |
+| Tooling | Homebrew installed; an admin account with passwordless `sudo` (the bootstrap runs unprivileged and escalates only the steps that need root) |
 
 The controller's public SSH key and two root-only password files must already exist and be referenced
 by path — the scripts never read a secret off the command line and never write one:
@@ -33,13 +33,20 @@ On a single-user host `GARM_PW_FILE` and `KEYCHAIN_PW_FILE` are normally the sam
 # Preview what would change (no side effects):
 scripts/mac/host-bootstrap.sh --dry-run
 
-# Apply:
-sudo scripts/mac/host-bootstrap.sh
+# Apply (as the admin user — NOT under sudo; see below):
+scripts/mac/host-bootstrap.sh
 ```
+
+Run the bootstrap as the admin user with passwordless `sudo` — **not** under
+`sudo scripts/mac/host-bootstrap.sh`. Homebrew refuses to run as root, and root's default `PATH` omits
+`/opt/homebrew/bin`, so a root shell breaks the unprivileged Tart install step. The privileged steps (user,
+Remote Login, auto-login, LaunchDaemons, `pmset`, updates, the config fragment) escalate with `sudo`
+internally; only the Tart install runs unprivileged. The scripts fail naming the step when passwordless
+`sudo` is unavailable.
 
 Each of the ten steps is check-then-act, so re-running is safe and makes no changes:
 
-1. create the `garm` user and install the controller's authorized key;
+1. create the `garm` user and append the controller's authorized key (existing keys are preserved);
 2. enable Remote Login (SSH);
 3. enable auto-login for `garm` (GUI session + unlocked login keychain);
 4. install and load the keychain-unlock LaunchDaemon;

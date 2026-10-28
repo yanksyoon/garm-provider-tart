@@ -5,6 +5,7 @@ stub_log "$@"
 if [ "$1" = "-g" ]; then
   printf ' sleep\t\t%s\n' "$(get pmset.sleep | sed 's/^$/1/')"
   printf ' disablesleep\t%s\n' "$(get pmset.disablesleep | sed 's/^$/0/')"
+  printf ' autorestart\t%s\n' "$(get pmset.autorestart | sed 's/^$/0/')"
   exit 0
 fi
 shift # drop -a

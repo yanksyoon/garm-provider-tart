@@ -52,6 +52,23 @@ require_sudo() {
   sudo -n true 2>/dev/null || die "$1: sudo required (run as root or with passwordless sudo)"
 }
 
+# resolve_bin <name> — echo the absolute path to a tool: first via PATH, then in
+# the Homebrew locations (Apple Silicon /opt/homebrew/bin, then Intel
+# /usr/local/bin). These scripts run over SSH where PATH is minimal, and root's
+# default PATH omits /opt/homebrew/bin, so a bare `command -v` is not enough.
+# Emits nothing and returns non-zero when the tool is absent.
+resolve_bin() {
+  local name="$1" p
+  if command -v "$name" >/dev/null 2>&1; then
+    command -v "$name"
+    return 0
+  fi
+  for p in "/opt/homebrew/bin/$name" "/usr/local/bin/$name"; do
+    if [ -x "$p" ]; then printf '%s\n' "$p"; return 0; fi
+  done
+  return 1
+}
+
 # json_string escapes a value for embedding in a JSON string. Pure bash for
 # macOS /bin/bash 3.2 (no jq, no associative arrays).
 json_string() {
@@ -142,6 +159,7 @@ check_power() {
   out="$(sudo -n pmset -g 2>/dev/null || true)"
   printf '%s\n' "$out" | grep -Eq '^[[:space:]]*sleep[[:space:]]+0([[:space:]]|$)' || return 1
   printf '%s\n' "$out" | grep -Eq '^[[:space:]]*disablesleep[[:space:]]+1([[:space:]]|$)' || return 1
+  printf '%s\n' "$out" | grep -Eq '^[[:space:]]*autorestart[[:space:]]+1([[:space:]]|$)' || return 1
 }
 
 check_updates() {
@@ -161,6 +179,7 @@ check_image() {
 
 check_prune_timer() {
   [ -f "$LAUNCHD_DIR/$PRUNE_DAEMON_LABEL.plist" ] || return 1
+  launchctl list 2>/dev/null | grep -qF "$PRUNE_DAEMON_LABEL"
 }
 
 check_config() {

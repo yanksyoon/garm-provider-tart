@@ -43,6 +43,12 @@ export WRAPPER_PATH="$workdir/usr/local/bin/garm-keychain-unlock"
 bootstrap() { PATH="$stub_dir:$SYS_PATH" "$scripts_dir/host-bootstrap.sh" "$@"; }
 host_check() { PATH="$stub_dir:$SYS_PATH" "$scripts_dir/host-check.sh" "$@"; }
 
+# A pre-existing operator key the bootstrap must preserve: authorized_keys is
+# appended, never replaced (attack #4: no destructive scope).
+mkdir -p "$workdir/Users/garm/.ssh"
+printf '%s\n' 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXISTINGEXISTINGEXISTINGEXISTINGEXISTING operator@old' \
+  >"$workdir/Users/garm/.ssh/authorized_keys"
+
 # --- dry-run: prints actions, changes nothing ---
 bootstrap --dry-run >"$workdir/dry-run.txt" 2>&1
 would="$(grep -c '^host-bootstrap: would ' "$workdir/dry-run.txt" || true)"
@@ -56,6 +62,13 @@ echo "dry-run: $would actions, state untouched"
 bootstrap >"$workdir/run1.txt" 2>&1
 apply1="$(grep -c '^host-bootstrap: apply ' "$workdir/run1.txt" || true)"
 [ "$apply1" -eq "$would" ] || { echo "first run applied $apply1, expected $would"; cat "$workdir/run1.txt"; exit 1; }
+
+# --- the pre-existing key survived the append, and the controller key landed ---
+grep -qxF 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXISTINGEXISTINGEXISTINGEXISTINGEXISTING operator@old' \
+  "$workdir/Users/garm/.ssh/authorized_keys" \
+  || { echo "pre-existing authorized key was dropped"; cat "$workdir/Users/garm/.ssh/authorized_keys"; exit 1; }
+grep -qxF "$(cat "$workdir/id_ed25519.pub")" "$workdir/Users/garm/.ssh/authorized_keys" \
+  || { echo "controller key was not appended"; cat "$workdir/Users/garm/.ssh/authorized_keys"; exit 1; }
 
 # --- host-check with stubs: every step ok ---
 host_check --json >"$workdir/check.json" 2>&1
