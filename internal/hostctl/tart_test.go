@@ -20,7 +20,7 @@ func tartStub(t *testing.T) string {
 	return abs
 }
 
-func TestRealTartCloneUsesStacked(t *testing.T) {
+func TestRealTartClone(t *testing.T) {
 	// Arrange: a RealTart pointed at the stub, with an argv log.
 	logPath := filepath.Join(t.TempDir(), "argv.log")
 	t.Setenv("TART_STUB_LOG", logPath)
@@ -31,13 +31,14 @@ func TestRealTartCloneUsesStacked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Assert: the argv carries --stacked, the image, then the name.
+	// Assert: tart 2.x removed --stacked (APFS copy-on-write is now the only
+	// clone mode); the argv carries the image then the name.
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "clone --stacked ghcr.io/x/macos@sha256:abc garm-abc123") {
-		t.Fatalf("clone argv = %q, want stacked clone", string(data))
+	if !strings.Contains(string(data), "clone ghcr.io/x/macos@sha256:abc garm-abc123") {
+		t.Fatalf("clone argv = %q, want plain clone", string(data))
 	}
 }
 

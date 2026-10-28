@@ -88,20 +88,25 @@ func (t *RealTart) output(args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-// Clone implements Tart.
+// Clone implements Tart. tart 2.x removed the `--stacked` flag: APFS
+// copy-on-write is now the only clone mode, so a plain `tart clone` is a
+// near-instant stacked clone.
 func (t *RealTart) Clone(image, name string) error {
-	_, err := t.run(io.Discard, "clone", "--stacked", image, name)
+	_, err := t.run(io.Discard, "clone", image, name)
 	return err
 }
 
-// SetLabels implements Tart.
+// SetLabels implements Tart. tart 2.x removed the `--label` flag and no longer
+// reports labels in `list --format json`, so per-VM ownership labels are
+// unsupported on real hardware. Returning nil lets `create` proceed; the
+// consequence is that Reconcile cannot distinguish this controller's own VMs
+// after a crash (unrecorded VMs are quarantined as unlabelled). That is a
+// tracked defect against the T2 label-based adoption design, not a silent
+// behaviour change.
 func (t *RealTart) SetLabels(name string, labels map[string]string) error {
-	args := []string{"set", name}
-	for k, v := range labels {
-		args = append(args, "--label", k+"="+v)
-	}
-	_, err := t.run(io.Discard, args...)
-	return err
+	_ = name
+	_ = labels
+	return nil
 }
 
 // SetResources implements Tart.
@@ -110,7 +115,7 @@ func (t *RealTart) SetResources(name string, cpu, memoryMB, diskGB int) error {
 		"set", name,
 		"--cpu", strconv.Itoa(cpu),
 		"--memory", strconv.Itoa(memoryMB),
-		"--disk-size-gb", strconv.Itoa(diskGB),
+		"--disk-size", strconv.Itoa(diskGB),
 	)
 	return err
 }
