@@ -13,16 +13,18 @@ import (
 
 func main() {
 	env := hostctl.CLIEnv{
-		Root:         getenv("TART_FLEET_ROOT", "/var/db/tart-fleet"),
-		SlotsPerHost: getenvInt("TART_FLEET_SLOTS_PER_HOST", 2),
-		HostName:     os.Getenv("TART_FLEET_HOST"),
-		ControllerID: os.Getenv("TART_FLEET_CONTROLLER_ID"),
-		TartBin:      getenv("TART_FLEET_TART_BIN", "tart"),
-		SecurityBin:  getenv("TART_FLEET_SECURITY_BIN", "security"),
-		DfBin:        getenv("TART_FLEET_DF_BIN", "df"),
+		Root:           getenv("TART_FLEET_ROOT", "/var/db/tart-fleet"),
+		SlotsPerHost:   getenvInt("TART_FLEET_SLOTS_PER_HOST", 2),
+		HostName:       os.Getenv("TART_FLEET_HOST"),
+		ControllerID:   os.Getenv("TART_FLEET_CONTROLLER_ID"),
+		TartBin:        getenv("TART_FLEET_TART_BIN", "tart"),
+		SecurityBin:    getenv("TART_FLEET_SECURITY_BIN", "security"),
+		DfBin:          getenv("TART_FLEET_DF_BIN", "df"),
+		StaleCreateTTL: os.Getenv("TART_FLEET_STALE_CREATE_TIMEOUT"),
 	}
 	// Quarantine TTL is configured in hours so an operator can set a whole
-	// number; the hostctl package accepts a duration string.
+	// number; the hostctl package accepts a duration string. The stale-create
+	// timeout is already a duration string ("5m"); empty means the default.
 	if h := os.Getenv("TART_FLEET_QUARANTINE_TTL_HOURS"); h != "" {
 		env.QuarantineTTL = h + "h"
 	}

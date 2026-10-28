@@ -19,14 +19,15 @@ const (
 
 // CLIEnv carries the process environment the CLI reads.
 type CLIEnv struct {
-	Root          string
-	SlotsPerHost  int
-	QuarantineTTL string // duration string, e.g. "24h"; empty means default
-	HostName      string
-	ControllerID  string
-	TartBin       string
-	SecurityBin   string
-	DfBin         string
+	Root           string
+	SlotsPerHost   int
+	QuarantineTTL  string // duration string, e.g. "24h"; empty means default
+	StaleCreateTTL string // duration string, e.g. "5m"; empty means default
+	HostName       string
+	ControllerID   string
+	TartBin        string
+	SecurityBin    string
+	DfBin          string
 }
 
 // Run dispatches one hostctl verb and returns the process exit code. JSON
@@ -40,13 +41,14 @@ func Run(args []string, env CLIEnv, stdin io.Reader, stdout, stderr io.Writer) i
 	verb, rest := args[0], args[1:]
 
 	svc := NewService(Options{
-		Root:          env.Root,
-		HostName:      env.HostName,
-		ControllerID:  env.ControllerID,
-		SlotsPerHost:  env.SlotsPerHost,
-		QuarantineTTL: parseTTL(env.QuarantineTTL),
-		Tart:          NewRealTart(env.TartBin),
-		Health:        NewRealHealth(env.SecurityBin, env.DfBin, env.Root),
+		Root:           env.Root,
+		HostName:       env.HostName,
+		ControllerID:   env.ControllerID,
+		SlotsPerHost:   env.SlotsPerHost,
+		QuarantineTTL:  parseTTL(env.QuarantineTTL),
+		StaleCreateTTL: parseTTL(env.StaleCreateTTL),
+		Tart:           NewRealTart(env.TartBin),
+		Health:         NewRealHealth(env.SecurityBin, env.DfBin, env.Root),
 	})
 
 	switch verb {

@@ -16,28 +16,39 @@ import (
 // process; the process exits after a single verb, so the flock is held for the
 // whole verb and concurrent verbs queue rather than interleave.
 type Service struct {
-	root          string
-	reg           *Registry
-	tart          Tart
-	health        Health
-	hostName      string
-	controllerID  string
-	slotsPerHost  int
-	quarantineTTL time.Duration
-	now           func() time.Time
+	root           string
+	reg            *Registry
+	tart           Tart
+	health         Health
+	hostName       string
+	controllerID   string
+	slotsPerHost   int
+	quarantineTTL  time.Duration
+	staleCreateTTL time.Duration
+	now            func() time.Time
 }
 
 // Options configures a Service. Root is the fleet directory
-// (/var/db/tart-fleet). SlotsPerHost and QuarantineTTL get defaults when zero.
+// (/var/db/tart-fleet). SlotsPerHost, QuarantineTTL and StaleCreateTTL get
+// defaults when zero.
 type Options struct {
-	Root          string
-	Tart          Tart
-	Health        Health
-	HostName      string
-	ControllerID  string
-	SlotsPerHost  int
-	QuarantineTTL time.Duration
+	Root           string
+	Tart           Tart
+	Health         Health
+	HostName       string
+	ControllerID   string
+	SlotsPerHost   int
+	QuarantineTTL  time.Duration
+	StaleCreateTTL time.Duration
 }
+
+// defaultStaleCreateTTL is how long a record may sit in `cloning` or `running`
+// before Reconcile treats the create as interrupted (a crash) and reclaims it —
+// re-probing a running record toward ready, or reaping the VM and record. It is
+// far longer than a normal create (the exclusive flock already prevents
+// Reconcile from observing an in-flight create), so it only bounds how long a
+// crash can strand a slot.
+const defaultStaleCreateTTL = 5 * time.Minute
 
 // NewService builds a Service. A nil Health yields an always-healthy probe so
 // the CLI works on hosts where the keychain check is unavailable; a nil Tart
@@ -49,6 +60,9 @@ func NewService(o Options) *Service {
 	if o.QuarantineTTL == 0 {
 		o.QuarantineTTL = 24 * time.Hour
 	}
+	if o.StaleCreateTTL == 0 {
+		o.StaleCreateTTL = defaultStaleCreateTTL
+	}
 	if o.HostName == "" {
 		o.HostName = hostname()
 	}
@@ -59,15 +73,16 @@ func NewService(o Options) *Service {
 		o.Health = noopHealth{}
 	}
 	return &Service{
-		root:          o.Root,
-		reg:           NewRegistry(o.Root),
-		tart:          o.Tart,
-		health:        o.Health,
-		hostName:      o.HostName,
-		controllerID:  o.ControllerID,
-		slotsPerHost:  o.SlotsPerHost,
-		quarantineTTL: o.QuarantineTTL,
-		now:           time.Now,
+		root:           o.Root,
+		reg:            NewRegistry(o.Root),
+		tart:           o.Tart,
+		health:         o.Health,
+		hostName:       o.HostName,
+		controllerID:   o.ControllerID,
+		slotsPerHost:   o.SlotsPerHost,
+		quarantineTTL:  o.QuarantineTTL,
+		staleCreateTTL: o.StaleCreateTTL,
+		now:            time.Now,
 	}
 }
 
