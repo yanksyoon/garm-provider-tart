@@ -19,15 +19,16 @@ const (
 
 // CLIEnv carries the process environment the CLI reads.
 type CLIEnv struct {
-	Root           string
-	SlotsPerHost   int
-	QuarantineTTL  string // duration string, e.g. "24h"; empty means default
-	StaleCreateTTL string // duration string, e.g. "5m"; empty means default
-	HostName       string
-	ControllerID   string
-	TartBin        string
-	SecurityBin    string
-	DfBin          string
+	Root             string
+	SlotsPerHost     int
+	QuarantineTTL    string // duration string, e.g. "24h"; empty means default
+	StaleCreateTTL   string // duration string, e.g. "5m"; empty means default
+	ProbeTimeoutSecs int    // readiness-probe timeout in seconds; 0 means default
+	HostName         string
+	ControllerID     string
+	TartBin          string
+	SecurityBin      string
+	DfBin            string
 }
 
 // Run dispatches one hostctl verb and returns the process exit code. JSON
@@ -47,6 +48,7 @@ func Run(args []string, env CLIEnv, stdin io.Reader, stdout, stderr io.Writer) i
 		SlotsPerHost:   env.SlotsPerHost,
 		QuarantineTTL:  parseTTL(env.QuarantineTTL),
 		StaleCreateTTL: parseTTL(env.StaleCreateTTL),
+		ProbeTimeout:   time.Duration(env.ProbeTimeoutSecs) * time.Second,
 		Tart:           NewRealTart(env.TartBin),
 		Health:         NewRealHealth(env.SecurityBin, env.DfBin, env.Root),
 	})

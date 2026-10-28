@@ -1,6 +1,7 @@
 package hostctl
 
 import (
+	"context"
 	"os"
 	"time"
 )
@@ -142,9 +143,12 @@ func (s *Service) reclaimStaleCreates(records []Record, byName map[string]VM, no
 
 // resumeRunning re-probes readiness for a stale running record and, when the
 // guest now answers, advances it to ready (running -> ready). It reports
-// whether the record was advanced.
+// whether the record was advanced. The probe is bounded by the host so a guest
+// that still never answers cannot pin the exclusive flock held by Reconcile.
 func (s *Service) resumeRunning(rec Record) bool {
-	if err := s.tart.Exec(rec.Name, nil, "true"); err != nil {
+	probeCtx, cancel := context.WithTimeout(context.Background(), s.probeTimeout)
+	defer cancel()
+	if err := s.tart.Exec(probeCtx, rec.Name, nil, "true"); err != nil {
 		return false
 	}
 	rec.State = StateReady

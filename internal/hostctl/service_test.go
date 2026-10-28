@@ -1,6 +1,7 @@
 package hostctl
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,16 +13,18 @@ import (
 
 // fakeTart is an in-memory Tart for precise control over each verb's outcome.
 type fakeTart struct {
-	mu         sync.Mutex
-	vms        map[string]VM
-	cloneErr   error
-	runErr     error
-	execErr    error
-	deleteErr  error
-	deleteNoop bool // when true, Delete returns nil without removing the VM
-	version    string
-	ip         string
-	clones     []string
+	mu          sync.Mutex
+	vms         map[string]VM
+	cloneErr    error
+	runErr      error
+	execErr     error
+	execHang    bool          // when true, Exec blocks until ctx is done
+	execEntered chan struct{} // when set, closed when Exec is entered
+	deleteErr   error
+	deleteNoop  bool // when true, Delete returns nil without removing the VM
+	version     string
+	ip          string
+	clones      []string
 }
 
 func newFakeTart() *fakeTart {
@@ -66,7 +69,18 @@ func (f *fakeTart) Run(name string) error {
 	return nil
 }
 func (f *fakeTart) IP(name string) (string, error) { return f.ip, nil }
-func (f *fakeTart) Exec(name string, stdin io.Reader, args ...string) error {
+func (f *fakeTart) Exec(ctx context.Context, name string, stdin io.Reader, args ...string) error {
+	if f.execEntered != nil {
+		select {
+		case <-f.execEntered:
+		default:
+			close(f.execEntered)
+		}
+	}
+	if f.execHang {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	return f.execErr
 }
 func (f *fakeTart) Stop(name string) error { return nil }
@@ -180,6 +194,61 @@ func TestCreateExecFailureStaysRunning(t *testing.T) {
 	}
 	if rec, _ := svc.reg.Load("garm-abc123"); rec.State != StateRunning {
 		t.Fatalf("persisted state = %s, want running", rec.State)
+	}
+}
+
+func TestCreateHungProbeReleasesFlock(t *testing.T) {
+	// Arrange: a tart whose exec blocks until ctx is done, a short probe
+	// timeout so the hang is bounded in the test, and a signal so the test
+	// knows the probe is under way (and the exclusive flock definitely held).
+	tart := newFakeTart()
+	tart.execHang = true
+	tart.execEntered = make(chan struct{})
+	svc := newTestService(t, tart)
+	svc.probeTimeout = 100 * time.Millisecond
+
+	// Act: create in the background; it holds the exclusive flock through the
+	// hung readiness probe until the host-side timeout fires.
+	createDone := make(chan struct{})
+	var createErr error
+	go func() {
+		_, createErr = svc.Create(createReq("garm-hang01"))
+		close(createDone)
+	}()
+	<-tart.execEntered // the probe is hung and the flock is held
+
+	// A concurrent get of another VM must complete in bounded time: it blocks
+	// only until the probe times out and releases the exclusive flock.
+	getDone := make(chan struct{})
+	go func() {
+		_, _ = svc.Get("garm-other")
+		close(getDone)
+	}()
+	select {
+	case <-getDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("concurrent get blocked: the hung readiness probe held the flock")
+	}
+
+	// Assert: create returned in bounded time, the record is running (never
+	// ready) with last_error, so the instance fails closed.
+	select {
+	case <-createDone:
+		if createErr != nil {
+			t.Fatalf("Create error = %v, want nil (caller decides)", createErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("create did not return after the probe timeout")
+	}
+	rec, err := svc.reg.Load("garm-hang01")
+	if err != nil {
+		t.Fatalf("record missing after create: %v", err)
+	}
+	if rec.State != StateRunning {
+		t.Fatalf("state = %s, want running", rec.State)
+	}
+	if rec.LastError == "" {
+		t.Fatal("last_error is empty, want the probe timeout error")
 	}
 }
 

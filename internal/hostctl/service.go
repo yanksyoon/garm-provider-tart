@@ -1,6 +1,7 @@
 package hostctl
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,12 +26,13 @@ type Service struct {
 	slotsPerHost   int
 	quarantineTTL  time.Duration
 	staleCreateTTL time.Duration
+	probeTimeout   time.Duration
 	now            func() time.Time
 }
 
 // Options configures a Service. Root is the fleet directory
-// (/var/db/tart-fleet). SlotsPerHost, QuarantineTTL and StaleCreateTTL get
-// defaults when zero.
+// (/var/db/tart-fleet). SlotsPerHost, QuarantineTTL, StaleCreateTTL and
+// ProbeTimeout get defaults when zero.
 type Options struct {
 	Root           string
 	Tart           Tart
@@ -40,6 +42,7 @@ type Options struct {
 	SlotsPerHost   int
 	QuarantineTTL  time.Duration
 	StaleCreateTTL time.Duration
+	ProbeTimeout   time.Duration
 }
 
 // defaultStaleCreateTTL is how long a record may sit in `cloning` or `running`
@@ -49,6 +52,13 @@ type Options struct {
 // Reconcile from observing an in-flight create), so it only bounds how long a
 // crash can strand a slot.
 const defaultStaleCreateTTL = 5 * time.Minute
+
+// defaultProbeTimeout bounds the `tart exec <name> true` readiness probe so a
+// guest whose agent never answers cannot pin the exclusive host flock. It is
+// generous enough for a first boot's guest-agent startup and short enough that
+// a hung guest releases the flock in bounded time; operators tune it down via
+// TART_FLEET_PROBE_TIMEOUT_SECONDS when a half-booted VM must fail faster.
+const defaultProbeTimeout = 60 * time.Second
 
 // NewService builds a Service. A nil Health yields an always-healthy probe so
 // the CLI works on hosts where the keychain check is unavailable; a nil Tart
@@ -62,6 +72,9 @@ func NewService(o Options) *Service {
 	}
 	if o.StaleCreateTTL == 0 {
 		o.StaleCreateTTL = defaultStaleCreateTTL
+	}
+	if o.ProbeTimeout == 0 {
+		o.ProbeTimeout = defaultProbeTimeout
 	}
 	if o.HostName == "" {
 		o.HostName = hostname()
@@ -82,6 +95,7 @@ func NewService(o Options) *Service {
 		slotsPerHost:   o.SlotsPerHost,
 		quarantineTTL:  o.QuarantineTTL,
 		staleCreateTTL: o.StaleCreateTTL,
+		probeTimeout:   o.ProbeTimeout,
 		now:            time.Now,
 	}
 }
@@ -273,8 +287,13 @@ func (s *Service) create(req CreateRequest) (Instance, error) {
 	}
 
 	// Readiness means `tart exec <name> true` succeeded — not that `tart run`
-	// returned. A failed probe keeps the record running with last_error.
-	if err := s.tart.Exec(req.Name, nil, "true"); err != nil {
+	// returned. The probe is bounded by the host so a guest whose agent never
+	// answers cannot pin the exclusive flock: on timeout the record stays
+	// running with last_error and the flock is released for other verbs.
+	probeCtx, cancel := context.WithTimeout(context.Background(), s.probeTimeout)
+	err = s.tart.Exec(probeCtx, req.Name, nil, "true")
+	cancel()
+	if err != nil {
 		rec.LastError = err.Error()
 		rec.UpdatedAt = s.now()
 		_ = s.reg.Save(rec)
@@ -489,7 +508,11 @@ func (s *Service) Bootstrap(name string, script io.Reader) (Instance, error) {
 		if err := s.reg.Save(rec); err != nil {
 			return err
 		}
-		if err := s.tart.Exec(name, script, "/bin/bash", "-s"); err != nil {
+		// The bootstrap script may legitimately run long (downloading the
+		// runner, configuring launchd), so it is not host-bounded: the
+		// provider's ssh deadline on the create verb is the bound, not the
+		// readiness-probe timeout.
+		if err := s.tart.Exec(context.Background(), name, script, "/bin/bash", "-s"); err != nil {
 			rec.State = StateFailed
 			rec.LastError = err.Error()
 			rec.UpdatedAt = s.now()
