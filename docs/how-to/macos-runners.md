@@ -56,7 +56,7 @@ garm-cli pool add \
   --enabled \
   --min-idle-runners 1 \
   --max-runners 2 \
-  --runner-bootstrap-timeout 900
+  --runner-bootstrap-timeout 15
 ```
 
 Confirm the pool exists and an idle runner is being provisioned:
