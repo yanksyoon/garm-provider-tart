@@ -47,7 +47,7 @@ internally; only the Tart install runs unprivileged. The scripts fail naming the
 Each of the ten steps is check-then-act, so re-running is safe and makes no changes:
 
 1. create the `garm` user and append the controller's authorized key (existing keys are preserved);
-2. enable Remote Login (SSH);
+2. enable Remote Login (SSH) and restrict it to `garm` (plus the operator) via `com.apple.access_ssh`;
 3. enable auto-login for `garm` (GUI session + unlocked login keychain);
 4. install and load the keychain-unlock LaunchDaemon;
 5. `pmset -a sleep 0 disablesleep 1 autorestart 1`;
@@ -66,6 +66,20 @@ macOS 15+ refuses to start VMs while the login keychain is locked. The keychain 
 belt and braces: auto-login (step 3) and a root LaunchDaemon (step 4) that runs
 `security unlock-keychain` at load. A LaunchDaemon is loaded by launchd at boot before any user
 session, so the keychain is unlocked before GARM reaches the host over SSH and starts a VM.
+
+### Security notes
+
+- Remote Login is restricted to `garm` (plus the operator account that ran the bootstrap) via the
+  `com.apple.access_ssh` group. `host-check.sh` asserts the restriction, not just that SSH is on.
+- The keychain password never reaches a process command line: the unlock daemon reads it from the
+  root-only `KEYCHAIN_PW_FILE` and passes it to `security unlock-keychain` on stdin, never via `-p`.
+- Inside the guest, the runner-install template passes GARM's instance token to `curl` through a
+  0600 header file (`-H @file`) and writes JIT credential files 0600 owner-only, so neither the
+  token nor the JIT RSA key material is world-readable or `ps`-visible. The non-JIT (registration
+  token) path reads the token from a 0600 file at run time and deletes it immediately after
+  `config.sh`; `config.sh` itself only accepts the token via `--token`, so it is briefly visible on
+  that one process's argv — a documented residual risk. Prefer the JIT path (the default), which
+  uses no registration token at all.
 
 ## Verify
 

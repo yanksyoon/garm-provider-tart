@@ -3,7 +3,7 @@
 #
 # Makes a fresh host ready for the provider in one pass:
 #   1. create the garm user and install the controller's authorized key;
-#   2. enable Remote Login (SSH);
+#   2. enable Remote Login (SSH) and restrict it to garm (+ the operator);
 #   3. enable auto-login for the garm user (GUI session + login keychain);
 #   4. install and load the keychain-unlock LaunchDaemon (boot ordering: a
 #      LaunchDaemon loads before any user session, so the keychain is unlocked
@@ -92,8 +92,20 @@ apply_user() {
 
 apply_remote_login() {
   require_sudo "remote_login"
+  local operator
+  operator="$(id -un)"
   sudo systemsetup -setremotelogin on >/dev/null \
     || die "remote_login: failed to enable Remote Login"
+  # Restrict SSH to garm (and the operator) via com.apple.access_ssh: once the
+  # group has members, only those members (plus root) may log in. An absent or
+  # empty group means every local user can SSH.
+  sudo dseditgroup -o create -r "Remote Login access" com.apple.access_ssh >/dev/null 2>&1 || true
+  sudo dseditgroup -o edit -a "$GARM_USER" -t user com.apple.access_ssh >/dev/null \
+    || die "remote_login: failed to grant $GARM_USER SSH access"
+  if [ -n "$operator" ] && [ "$operator" != "root" ] && [ "$operator" != "$GARM_USER" ]; then
+    sudo dseditgroup -o edit -a "$operator" -t user com.apple.access_ssh >/dev/null \
+      || die "remote_login: failed to grant $operator SSH access"
+  fi
 }
 
 apply_auto_login() {

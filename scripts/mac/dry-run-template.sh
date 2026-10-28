@@ -99,6 +99,7 @@ run_script() {
     PATH="$workdir/bin:$PATH" \
     FAKE_CURL_FIXTURES="$scripts_dir/testdata/fixtures" \
     FAKE_CURL_CALLBACK_LOG="$workdir/callbacks.log" \
+    FAKE_CURL_ARGV_LOG="$workdir/curl-argv.log" \
     SVC_LOG="$workdir/svc.log" \
     CONFIG_LOG="$workdir/config.log" \
     bash "$rendered"
@@ -108,6 +109,26 @@ run_script() {
 # proves the idempotency branch.
 run_script
 run_script
+
+# Secret hygiene: the bearer token is passed to curl via `-H @file`, never on
+# the command line, so the token value must not appear in any curl argv.
+if grep -q 'test-jwt-token' "$workdir/curl-argv.log" 2>/dev/null; then
+  echo "dry-run: bearer token leaked onto a curl command line" >&2
+  grep -n 'test-jwt-token' "$workdir/curl-argv.log" >&2
+  exit 1
+fi
+
+# Secret hygiene (JIT): the fetched credential files must be 0600 owner-only
+# after fetch, since .credentials_rsaparams carries the JIT RSA private key.
+if [ "$mode" = "jit" ]; then
+  for f in .runner .credentials .credentials_rsaparams; do
+    mode_oct="$(stat -c '%a' "$runhome/$f" 2>/dev/null || true)"
+    [ "$mode_oct" = "600" ] || {
+      echo "dry-run: $f is mode ${mode_oct:-missing}, want 600" >&2
+      exit 1
+    }
+  done
+fi
 
 # Assert the terminal callback reported the runner as idle/started (once per
 # run, so at least twice total).

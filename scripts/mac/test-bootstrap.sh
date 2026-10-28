@@ -85,6 +85,17 @@ if grep -Rq "PRIVATE KEY" "$workdir/Library" "$workdir/etc" "$workdir/usr" "$wor
   echo "secret leak: private key material was written by the script"; exit 1
 fi
 
+# --- keychain wrapper: password must go over stdin, never via `-p` (argv) ---
+if grep -q 'unlock-keychain -p' "$WRAPPER_PATH"; then
+  echo "secret leak: keychain wrapper passes the password via -p (ps-visible)"; exit 1
+fi
+grep -q 'security unlock-keychain' "$WRAPPER_PATH" \
+  || { echo "keychain wrapper missing security unlock-keychain"; exit 1; }
+grep -q 'printf.*|.*security unlock-keychain' "$WRAPPER_PATH" \
+  || { echo "keychain wrapper does not pipe the password on stdin"; exit 1; }
+[ "$(stat -c '%a' "$WRAPPER_PATH")" = "700" ] \
+  || { echo "keychain wrapper is not mode 700"; exit 1; }
+
 # --- second run: applies nothing (idempotent) ---
 bootstrap >"$workdir/run2.txt" 2>&1
 apply2="$(grep -c '^host-bootstrap: apply ' "$workdir/run2.txt" || true)"

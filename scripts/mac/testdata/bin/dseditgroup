@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Stub dseditgroup(1): records create/edit operations as marker files and
+# reports membership from those markers, so test-bootstrap.sh can drive the
+# com.apple.access_ssh restriction without a Mac. The group name is always the
+# last argument; -a/-m name the user for edit/checkmember.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+
+group=""
+for a in "$@"; do group="$a"; done   # the group is always the final argument
+
+op=""
+user=""
+prev=""
+for a in "$@"; do
+  case "$a" in
+    -o|-a|-m) prev="$a" ;;
+    -r|-t) prev="skip" ;;   # comment (-r) and record type (-t) values are ignored
+    *)
+      case "$prev" in
+        -o) op="$a" ;;
+        -a|-m) user="$a" ;;
+      esac
+      prev=""
+      ;;
+  esac
+done
+
+case "$op" in
+  create) mark "dseditgroup.$group.created" ;;
+  edit) mark "dseditgroup.$group.member.$user" ;;
+  checkmember)
+    if has "dseditgroup.$group.member.$user"; then
+      echo "yes $user is a member of $group"
+    else
+      echo "no $user is NOT a member of $group"
+    fi
+    ;;
+esac
+exit 0
