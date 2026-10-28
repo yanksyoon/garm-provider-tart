@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Stand-in for curl used by the macOS runner-template dry run. It serves
+# fixture credential files keyed by URL path suffix and records status
+# callbacks, so the template's JIT/non-JIT flow can be exercised on Linux
+# without a Mac, Tart, or a live GARM controller. It is not a general curl
+# replacement: only the flag shapes the template emits are understood.
+#
+# Environment:
+#   FAKE_CURL_FIXTURES      directory holding the fixture files
+#                           (default: ../testdata/fixtures relative to this file)
+#   FAKE_CURL_CALLBACK_LOG  file to append recorded status-callback bodies to
+set -euo pipefail
+
+fixtures="${FAKE_CURL_FIXTURES:-$(cd "$(dirname "${BASH_SOURCE[0]}")/fixtures" && pwd)}"
+callback_log="${FAKE_CURL_CALLBACK_LOG:-/dev/null}"
+
+url=""
+out=""
+data=""
+prev=""
+for arg in "$@"; do
+  case "$arg" in
+    -o|-d)
+      prev="$arg"
+      ;;
+    *)
+      case "$prev" in
+        -o) out="$arg" ;;
+        -d) data="$arg" ;;
+      esac
+      prev=""
+      # The template always passes the URL as the last argument, so each
+      # non-flag argument overwrites url and the final value is the URL.
+      url="$arg"
+      ;;
+  esac
+done
+
+serve() {
+  # serve <output-file> <fixture-file>: copy fixture to the -o target, or to
+  # stdout when no -o was given.
+  if [ -n "$1" ]; then
+    cp "$2" "$1"
+  else
+    cat "$2"
+  fi
+}
+
+case "$url" in
+  */credentials/runner)
+    serve "$out" "$fixtures/runner"
+    ;;
+  */credentials/credentials_rsaparams)
+    serve "$out" "$fixtures/credentials_rsaparams"
+    ;;
+  */credentials/credentials)
+    serve "$out" "$fixtures/credentials"
+    ;;
+  */system/service-name)
+    serve "$out" "$fixtures/service-name"
+    ;;
+  */runner-registration-token/*|*/runner-registration-token)
+    serve "$out" "$fixtures/registration-token"
+    ;;
+  */status*)
+    printf '%s\n' "$data" >> "$callback_log"
+    ;;
+  *)
+    echo "fake-curl: unhandled URL: $url" >&2
+    exit 1
+    ;;
+esac
