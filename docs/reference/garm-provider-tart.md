@@ -17,7 +17,8 @@ provider config and `<vm-name>` is the Tart VM name. Example: `mac-mini-01/garm-
 ## Configuration
 
 GARM passes the config path in `GARM_PROVIDER_CONFIG_FILE`. The file is TOML. Every key is read from
-`internal/provider/config.go`; defaults are applied in `Validate`.
+`internal/provider/config.go`; defaults are applied in `Validate`, except `ssh_bin`, which is resolved in
+`internal/provider/ssh.go` `NewClient` (PATH lookup with a `/usr/bin/ssh` fallback).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -167,7 +168,8 @@ failure: any live state → failed
 
 - `cloning` → `running` happens when `tart run` returns.
 - `running` → `ready` happens only when `tart exec <name> true` succeeds.
-- `ready` → `bootstrapping` → `idle` is driven by the hostctl `bootstrap` verb.
+- `ready` → `bootstrapping` → `idle` is driven by the hostctl `bootstrap` verb; `ready` may also move
+  straight to `idle` (see `legalTransitions` in `internal/hostctl/state.go`).
 - `deleting` → `gone` is a tombstone transition; `gone` is never persisted, it is the state of an absent
   VM and an absent record.
 - Reconciliation adds two boot-time outcomes: `adopted` (a VM in `tart list` carrying this controller's
