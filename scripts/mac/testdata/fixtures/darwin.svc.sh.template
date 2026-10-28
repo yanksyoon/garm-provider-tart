@@ -1,0 +1,8 @@
+#!/bin/bash
+# Stand-in for the runner's bin/darwin.svc.sh.template. ensure_svc_script
+# substitutes {{SvcNameVar}} and {{SvcDescription}} into it to produce
+# ./svc.sh; running the result records the verb so the dry run can assert that
+# install and start were invoked with the substituted service name.
+SVC_NAME="{{SvcNameVar}}"
+echo "svc.sh $1 (service: $SVC_NAME)" >> "${SVC_LOG:-/dev/null}"
+exit 0
