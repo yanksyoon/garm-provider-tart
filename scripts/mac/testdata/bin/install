@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Stub install(1): copy SRC to DST (mkdir -p the parent) or, with -d, mkdir -p.
+# Ignores ownership/mode flags so the test runs unprivileged. The last
+# positional argument is the destination, the second-to-last the source.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+dflag=0
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) dflag=1 ;;
+    -m|-o|-g) shift ;;   # skip the flag's value
+    -*) ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+n=${#args[@]}
+if [ "$dflag" = 1 ]; then
+  [ "$n" -ge 1 ] && mkdir -p "${args[n-1]}"
+  exit 0
+fi
+[ "$n" -ge 2 ] || { echo "install stub: need SRC and DST" >&2; exit 1; }
+dst="${args[n-1]}"
+src="${args[n-2]}"
+mkdir -p "$(dirname "$dst")"
+cp "$src" "$dst"

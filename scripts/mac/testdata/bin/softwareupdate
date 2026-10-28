@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Stub softwareupdate: --schedule off marks the schedule disabled; --schedule
+# (no arg) reports the state.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+if [ "$1" = "--schedule" ]; then
+  if [ "${2:-}" = "off" ]; then
+    mark softwareupdate.schedule-off
+    exit 0
+  fi
+  if has softwareupdate.schedule-off; then
+    echo "Automatic check is off"
+  else
+    echo "Automatic check is on"
+  fi
+fi
+exit 0

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Stub crane(1): `digest` echoes a fake pinned digest so image-refresh.sh can
+# resolve a bare tag. CRANE_STUB_DIGEST overrides the value.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+if [ "$1" = "digest" ]; then
+  echo "${CRANE_STUB_DIGEST:-sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
+fi
+exit 0

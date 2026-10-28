@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Stub security(1): unlock-keychain marks the keychain unlocked;
+# show-keychain-info exits 0 when unlocked, 1 when locked (mirrors macOS).
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+case "$1" in
+  unlock-keychain) mark security.unlocked ;;
+  show-keychain-info)
+    if has security.unlocked; then
+      echo "keychain locked: no"
+      exit 0
+    fi
+    echo "keychain locked: yes"
+    exit 1
+    ;;
+esac
+exit 0

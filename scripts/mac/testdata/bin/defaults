@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Stub defaults(1): read/write a fake per-domain store under the state dir.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+cmd="$1"
+case "$cmd" in
+  read)
+    domain="$2"; key="$3"
+    f="$STUB_STATE/defaults/$domain/$key"
+    if [ -f "$f" ]; then cat "$f"; exit 0; fi
+    echo "The domain/default pair of ($domain, $key) does not exist" >&2
+    exit 1
+    ;;
+  write)
+    domain="$2"; key="$3"
+    val="$4"
+    [ "$val" = "-bool" ] && val="$5"
+    mkdir -p "$STUB_STATE/defaults/$domain"
+    printf '%s' "$val" >"$STUB_STATE/defaults/$domain/$key"
+    ;;
+  *)
+    echo "defaults stub: unsupported command $cmd" >&2
+    exit 1
+    ;;
+esac

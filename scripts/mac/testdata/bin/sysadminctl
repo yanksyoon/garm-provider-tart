@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Stub sysadminctl: `-addUser <name>` records the user marker.
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+if [ "$1" = "-addUser" ]; then
+  mark "user.$2"
+fi
+exit 0

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Stub launchctl(1). `list` prints the loaded labels; load/bootstrap/bootout
+# mark or clear a label (derived from the trailing *.plist path).
+. "$(dirname "$0")/_stub.sh"
+stub_log "$@"
+case "$1" in
+  list)
+    if has launchctl.com.garm.keychain-unlock; then echo "com.garm.keychain-unlock"; fi
+    if has launchctl.com.garm.tart-prune; then echo "com.garm.tart-prune"; fi
+    ;;
+  load|bootstrap|bootout)
+    label=""
+    for a in "$@"; do
+      case "$a" in
+        *.plist) label="$(basename "$a" .plist)" ;;
+      esac
+    done
+    [ -n "$label" ] || { echo "launchctl stub: no plist argument" >&2; exit 1; }
+    if [ "$1" = "bootout" ]; then unmark "launchctl.$label"; else mark "launchctl.$label"; fi
+    ;;
+esac
+exit 0
