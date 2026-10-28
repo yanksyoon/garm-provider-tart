@@ -4,6 +4,15 @@
 # injects into extra_specs["runner_install_template"] fetches and runs it inside
 # the guest. It therefore runs as a plain script, not a cloud-init payload.
 #
+# GARM's renderer (text/template, no FuncMap) performs no shell escaping, so
+# this template never interpolates a context value into a shell-executed
+# position. Every context value — RepoURL, DownloadURL, RunnerName,
+# RunnerLabels, GitHubRunnerGroup, CallbackURL, MetadataURL, CallbackToken — is
+# read from a quoted here-document into a shell variable and used only via
+# double-quoted "$VAR" references. A quoted here-document delimiter suppresses
+# all expansion, so $(), backticks, quotes, % and unicode in a value are
+# literal data, not code.
+#
 # Constraints (macOS /bin/bash 3.2):
 #   * no associative arrays, no mapfile, no `sed -i` without a suffix;
 #   * the runner is supervised by launchd via ./svc.sh install|start (no
@@ -14,9 +23,49 @@ set -euo pipefail
 set -x
 {{- end }}
 
-CALLBACK_URL='{{ .CallbackURL }}'
-METADATA_URL='{{ .MetadataURL }}'
-BEARER_TOKEN='{{ .CallbackToken }}'
+# Read every template context value from a quoted here-document. A quoted
+# delimiter suppresses all shell expansion inside the body, so a hostile value
+# cannot break out of its quoting context or execute: it is captured as literal
+# data, then used only via double-quoted "$VAR" references. The three secrets
+# (CallbackURL, MetadataURL, CallbackToken) are rendered here rather than
+# inherited from the environment: GARM's injected wrapper (linux_wrapper.tmpl)
+# assigns CALLBACK_URL/METADATA_URL/BEARER_TOKEN without `export` and runs this
+# install script as a child process, so those variables never reach it.
+# These fields are single-line (a URL, a name, comma-separated labels, a group),
+# so `read -r` takes the first line and any injected newline stays inside the
+# discarded here-document. The only escape is a value line exactly equal to the
+# delimiter below, which none of these fields can legitimately contain.
+IFS= read -r CALLBACK_URL <<'GARM_MACOS_EOV' || true
+{{ .CallbackURL }}
+GARM_MACOS_EOV
+IFS= read -r METADATA_URL <<'GARM_MACOS_EOV' || true
+{{ .MetadataURL }}
+GARM_MACOS_EOV
+IFS= read -r BEARER_TOKEN <<'GARM_MACOS_EOV' || true
+{{ .CallbackToken }}
+GARM_MACOS_EOV
+IFS= read -r REPO_URL <<'GARM_MACOS_EOV' || true
+{{ .RepoURL }}
+GARM_MACOS_EOV
+IFS= read -r DOWNLOAD_URL <<'GARM_MACOS_EOV' || true
+{{ .DownloadURL }}
+GARM_MACOS_EOV
+IFS= read -r RUNNER_NAME <<'GARM_MACOS_EOV' || true
+{{ .RunnerName }}
+GARM_MACOS_EOV
+IFS= read -r RUNNER_LABELS <<'GARM_MACOS_EOV' || true
+{{ .RunnerLabels }}
+GARM_MACOS_EOV
+IFS= read -r GITHUB_RUNNER_GROUP <<'GARM_MACOS_EOV' || true
+{{ .GitHubRunnerGroup }}
+GARM_MACOS_EOV
+
+# Fail loudly before any use if a required value is empty. GARM always supplies
+# these context values, so an empty one means a broken template or render;
+# surfacing it here beats a confusing curl/config.sh failure later.
+[ -n "$CALLBACK_URL" ] || { echo "garm-macos-runner: CALLBACK_URL is empty (missing .CallbackURL in the template context)" >&2; exit 1; }
+[ -n "$METADATA_URL" ] || { echo "garm-macos-runner: METADATA_URL is empty (missing .MetadataURL in the template context)" >&2; exit 1; }
+[ -n "$BEARER_TOKEN" ] || { echo "garm-macos-runner: BEARER_TOKEN is empty (missing .CallbackToken in the template context)" >&2; exit 1; }
 
 # The actions-runner root lives under the runner user's home. The golden image
 # bakes the runner binary here so the download step can be skipped.
@@ -100,10 +149,10 @@ fetch_cred() {
 
 # download_runner fetches and extracts the runner archive.
 download_runner() {
-  send_status "downloading runner from {{ .DownloadURL }}"
+  send_status "downloading runner"
   mkdir -p "$RUN_HOME" || fail "failed to create $RUN_HOME"
   curl --retry 5 --retry-delay 5 --retry-connrefused --fail -sSL \
-    -o "$RUN_HOME/runner.tar.gz" '{{ .DownloadURL }}' \
+    -o "$RUN_HOME/runner.tar.gz" "$DOWNLOAD_URL" \
     || fail "failed to download runner archive"
   send_status "extracting runner"
   tar -xf "$RUN_HOME/runner.tar.gz" -C "$RUN_HOME" \
@@ -229,13 +278,13 @@ chmod 600 "$REG_TOKEN_FILE"
 
 send_status "configuring runner"
 {{- if .GitHubRunnerGroup }}
-./config.sh --unattended --url '{{ .RepoURL }}' --token "$(cat "$REG_TOKEN_FILE")" \
-  --runnergroup "{{ .GitHubRunnerGroup }}" --name "{{ .RunnerName }}" \
-  --labels "{{ .RunnerLabels }}" --no-default-labels --ephemeral \
+./config.sh --unattended --url "$REPO_URL" --token "$(cat "$REG_TOKEN_FILE")" \
+  --runnergroup "$GITHUB_RUNNER_GROUP" --name "$RUNNER_NAME" \
+  --labels "$RUNNER_LABELS" --no-default-labels --ephemeral \
   || fail "failed to configure runner"
 {{- else }}
-./config.sh --unattended --url '{{ .RepoURL }}' --token "$(cat "$REG_TOKEN_FILE")" \
-  --name "{{ .RunnerName }}" --labels "{{ .RunnerLabels }}" \
+./config.sh --unattended --url "$REPO_URL" --token "$(cat "$REG_TOKEN_FILE")" \
+  --name "$RUNNER_NAME" --labels "$RUNNER_LABELS" \
   --no-default-labels --ephemeral \
   || fail "failed to configure runner"
 {{- end }}

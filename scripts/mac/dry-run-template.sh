@@ -89,7 +89,11 @@ fi
 
 # Run the rendered script twice with the fake tools first on PATH. RUN_HOME is
 # derived from $HOME, so point HOME at the workdir. The shared SVC_LOG/CONFIG_LOG
-# let us count install/start/config invocations across both runs.
+# let us count install/start/config invocations across both runs. No
+# CALLBACK_URL/METADATA_URL/BEARER_TOKEN are exported: the rendered script
+# reads them from its own here-documents (GARM's wrapper assigns them without
+# `export`, so the real install script never inherits them either), keeping the
+# dry run faithful to production.
 run_script() {
   HOME="$workdir/home" \
     PATH="$workdir/bin:$PATH" \
