@@ -1,0 +1,67 @@
+# Integration stack: a real GARM controller drives the real provider binary
+# against two fake hosts (real tart-hostctl + stub tart + real sshd) and a real
+# Gitea forge. No Apple hardware, no GitHub tokens, no host ports.
+#
+# The test driver builds the provider and tart-hostctl binaries into ./.work
+# and mounts them into the containers; it drives everything with
+# `docker compose exec`, so nothing here needs to bind a host port. Stateful
+# data (gitea sqlite, garm sqlite) lives in named volumes so `docker compose
+# down -v` leaves no root-owned files behind on the host.
+services:
+  garm:
+    build:
+      context: .
+      dockerfile: garm/Dockerfile
+    volumes:
+      - ./.work/garm/config.toml:/etc/garm/config.toml:ro
+      - ./.work/provider:/opt/garm-tart:ro
+      - garm-db:/var/lib/garm
+    depends_on:
+      - gitea
+      - fake-host-1
+      - fake-host-2
+      - tools
+    restart: "no"
+
+  gitea:
+    image: gitea/gitea:1.25.5
+    environment:
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__server__ROOT_URL: http://gitea:3000/
+      GITEA__server__DOMAIN: gitea
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__security__SECRET_KEY: integration-test-secret-key-32-chars
+      GITEA__service__DISABLE_REGISTRATION: "true"
+    volumes:
+      - gitea-data:/data
+    restart: "no"
+
+  fake-host-1:
+    build:
+      context: .
+      dockerfile: fake-host/Dockerfile
+    volumes:
+      - ./.work/bin/tart-hostctl:/usr/local/bin/tart-hostctl:ro
+      - ./.work/authorized_keys:/run/garm-authorized_keys:ro
+    restart: "no"
+
+  fake-host-2:
+    build:
+      context: .
+      dockerfile: fake-host/Dockerfile
+    volumes:
+      - ./.work/bin/tart-hostctl:/usr/local/bin/tart-hostctl:ro
+      - ./.work/authorized_keys:/run/garm-authorized_keys:ro
+    restart: "no"
+
+  tools:
+    image: busybox:1.36
+    command: ["httpd", "-f", "-p", "8080", "-h", "/www"]
+    volumes:
+      - ./tools:/www:ro
+    restart: "no"
+
+volumes:
+  gitea-data: {}
+  garm-db: {}

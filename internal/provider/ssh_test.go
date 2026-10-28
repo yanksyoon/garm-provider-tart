@@ -42,6 +42,22 @@ func testClient(t *testing.T) *Client {
 	)
 }
 
+func TestNewClientResolvesSSHBinWithoutPATH(t *testing.T) {
+	// Arrange: GARM runs external providers with a minimal environment that has
+	// no PATH, so `ssh` cannot be resolved by lookup and must fall back to the
+	// standard absolute location.
+	t.Setenv("PATH", "")
+
+	// Act: build a client with no explicit ssh_bin.
+	c := NewClient(Host{Name: "mac-mini-01", Address: "10.20.0.11"}, "garm", "", "", "", "")
+
+	// Assert: a concrete path, never the bare "ssh" that would fail under a
+	// PATH-less provider environment.
+	if c.sshBin != "/usr/bin/ssh" {
+		t.Fatalf("sshBin = %q, want /usr/bin/ssh", c.sshBin)
+	}
+}
+
 func TestClientRunRecordsHostctlInvocation(t *testing.T) {
 	// Arrange: a stub that logs argv and returns success.
 	logPath := filepath.Join(t.TempDir(), "argv.log")

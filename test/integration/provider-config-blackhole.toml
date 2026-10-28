@@ -1,0 +1,18 @@
+# Provider config for the failure path: a single unreachable host. The `.invalid`
+# TLD never resolves, so every probe fails fast and the provider reports
+# no_reachable_host rather than hanging or pretending success.
+ssh_user = "garm"
+ssh_key = "/opt/garm-tart/id_ed25519"
+hostctl_bin = "/usr/local/bin/tart-hostctl"
+
+create_timeout_seconds = 60
+command_timeout_seconds = 30
+probe_timeout_seconds = 3
+slots_per_host = 2
+
+image = "ghcr.io/cirruslabs/macos-tahoe-xcode@sha256:integration-test"
+
+[[hosts]]
+name = "blackhole"
+address = "blackhole.invalid"
+port = 22

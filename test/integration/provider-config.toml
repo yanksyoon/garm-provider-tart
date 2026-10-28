@@ -1,0 +1,26 @@
+# Provider config for the happy path: two fake hosts on the compose network.
+# ssh_key points at the test keypair mounted at /opt/garm-tart; known_hosts is
+# empty so host keys are not verified (fake hosts, ephemeral host keys).
+ssh_user = "garm"
+ssh_key = "/opt/garm-tart/id_ed25519"
+hostctl_bin = "/usr/local/bin/tart-hostctl"
+
+create_timeout_seconds = 120
+command_timeout_seconds = 30
+probe_timeout_seconds = 3
+slots_per_host = 2
+
+image = "ghcr.io/cirruslabs/macos-tahoe-xcode@sha256:integration-test"
+default_cpu = 4
+default_memory_mb = 8192
+default_disk_gb = 50
+
+[[hosts]]
+name = "fake-host-1"
+address = "fake-host-1"
+port = 22
+
+[[hosts]]
+name = "fake-host-2"
+address = "fake-host-2"
+port = 22

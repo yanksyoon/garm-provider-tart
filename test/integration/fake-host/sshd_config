@@ -1,0 +1,16 @@
+Port 22
+AddressFamily inet
+ListenAddress 0.0.0.0
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+ChallengeResponseAuthentication no
+X11Forwarding no
+PrintMotd no
+PermitUserEnvironment yes
+# The provider's public key is a read-only bind mount owned by the host uid, so
+# it never matches `garm`; StrictModes off keeps sshd from rejecting it. This is
+# a throwaway fake host, not a hardened endpoint.
+StrictModes no

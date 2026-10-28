@@ -53,7 +53,15 @@ type Client struct {
 // NewClient builds a Client for one host.
 func NewClient(host Host, user, keyPath, knownHosts, sshBin, hostctlBin string) *Client {
 	if sshBin == "" {
-		sshBin = "ssh"
+		// GARM runs external providers with a minimal environment that has no
+		// PATH, so `exec.LookPath("ssh")` cannot resolve the client there. Try
+		// PATH first (interactive/tests), then fall back to the standard
+		// location on the Linux/macOS controllers this provider targets.
+		if p, err := exec.LookPath("ssh"); err == nil {
+			sshBin = p
+		} else {
+			sshBin = "/usr/bin/ssh"
+		}
 	}
 	if hostctlBin == "" {
 		hostctlBin = "/usr/local/bin/tart-hostctl"

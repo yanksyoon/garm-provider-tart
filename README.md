@@ -65,9 +65,14 @@ TBD.
 go build ./... && go vet ./... && gofmt -l .
 go test -race ./internal/hostctl/... ./internal/provider/... -count=1
 go test -race ./internal/hostctl/... -run 'Concurrency|Crash|Adopt' -count=20
+make integration            # real GARM + fake hosts + Gitea (Docker; GARM_TEST_COMPOSE=podman-compose for rootless)
 shellcheck -S warning $(find scripts -name '*.sh' 2>/dev/null)
 npx --yes markdownlint-cli2 $(find . -name '*.md' -not -path './.git/*')
 ```
+
+`make integration` drives a real GARM controller against the real provider binary, two fake hosts
+(real `tart-hostctl` + stub `tart` + real `sshd`) and a real Gitea forge, entirely on Docker — no Apple
+hardware, no GitHub tokens. See `test/integration/` and `.github/workflows/integration.yml`.
 
 CI runs the same commands (`.github/workflows/ci.yml`, job `ci`). `main` is protected: every change lands
 through a pull request with a green `ci` check.
