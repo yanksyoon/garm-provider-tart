@@ -10,9 +10,10 @@ GARM external-provider CLI contract (`CreateInstance`, `DeleteInstance`, `GetIns
 
 ## Status
 
-The host-owned registry and the idempotent Tart verb set are implemented and unit-tested with stub
-`tart`/`ssh` binaries. Fleet placement (T5) and the guest bootstrap template (T3) are not done yet;
-nothing here runs on real hardware.
+The host-owned registry, the idempotent Tart verb set, fleet placement (T5), and the guest bootstrap
+template (T3) are implemented and unit-tested with stub `tart`/`ssh` binaries. `StartInstance` and
+`StopInstance` are recognised but not implemented yet (they return exit 1); nothing here runs on real
+hardware.
 
 ## Architecture
 
@@ -102,10 +103,10 @@ GARM execs the provider binary once per operation, with `GARM_COMMAND` selecting
 | --- | --- | --- |
 | `CreateInstance` | one `ProviderInstance` | reads `BootstrapInstance` JSON on stdin |
 | `GetInstance` | one `ProviderInstance` | `GARM_INSTANCE_ID` |
-| `ListInstances` | JSON array (`[]` when empty) | fan-out lands in T5 |
+| `ListInstances` | JSON array (`[]` when empty) | fan-out across hosts, deduplicated |
 | `DeleteInstance` | nothing | no-op when the VM is already gone |
-| `RemoveAllInstances` | nothing | fan-out lands in T5 |
-| `StartInstance`, `StopInstance` | nothing | arrive with the bootstrap template (T3) |
+| `RemoveAllInstances` | nothing | fan-out across hosts, best-effort |
+| `StartInstance`, `StopInstance` | nothing | not implemented (exit 1) |
 
 `provider_id` is `<host>/<vm-name>`. Diagnostics go to stderr; stdout carries JSON only.
 Exit codes: `0` success, `1` operation/configuration failure, `2` usage error.
