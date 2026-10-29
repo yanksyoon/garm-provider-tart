@@ -14,7 +14,7 @@ import (
 func main() {
 	env := hostctl.CLIEnv{
 		Root:             getenv("TART_FLEET_ROOT", "/var/db/tart-fleet"),
-		SlotsPerHost:     getenvInt("TART_FLEET_SLOTS_PER_HOST", 2),
+		SlotsPerHost:     getenvInt("TART_FLEET_SLOTS_PER_HOST", hostctl.MaxSlotsPerHost),
 		StaleCreateTTL:   os.Getenv("TART_FLEET_STALE_CREATE_TIMEOUT"),
 		ProbeTimeoutSecs: getenvInt("TART_FLEET_PROBE_TIMEOUT_SECONDS", 0),
 		HostName:         os.Getenv("TART_FLEET_HOST"),

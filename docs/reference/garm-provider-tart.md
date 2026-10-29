@@ -30,7 +30,7 @@ GARM passes the config path in `GARM_PROVIDER_CONFIG_FILE`. The file is TOML. Ev
 | `create_timeout_seconds` | int | `900` | end-to-end bound for one `CreateInstance` call |
 | `command_timeout_seconds` | int | `30` | bound for one SSH command on a host |
 | `probe_timeout_seconds` | int | `3` | bound for one host `status` probe (the whole probe pass runs in parallel) |
-| `slots_per_host` | int | `1` | concurrent guests per host; values above `2` are rejected |
+| `slots_per_host` | int | `1` | informational planning hint; the host enforces actual capacity via `TART_FLEET_SLOTS_PER_HOST`. Values above `2` are rejected |
 | `image` | string | empty | golden image used when the bootstrap payload carries none |
 | `default_cpu` | int | `4` | guest CPU count when not overridden |
 | `default_memory_mb` | int | `8192` | guest memory when not overridden |
@@ -180,7 +180,9 @@ failure: any live state → failed
 
 A host counts its licence slots via `capacity { total, used, adopted, quarantined }`:
 
-- `total` is `slots_per_host` (maximum `2`).
+- `total` is the host's `TART_FLEET_SLOTS_PER_HOST`, a hard ceiling of `2` (values above `2` are
+  rejected). The provider's `slots_per_host` config key is an informational planning hint and does not
+  itself set this value.
 - `used` counts every live lifecycle record, including `deleting` tombstones.
 - `adopted` counts VMs carrying this controller's label but no record.
 - `quarantined` counts unlabelled VMs awaiting the quarantine TTL.
@@ -271,7 +273,7 @@ The hostctl CLI is configured through environment variables (`cmd/tart-hostctl/m
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `TART_FLEET_ROOT` | `/var/db/tart-fleet` | registry root |
-| `TART_FLEET_SLOTS_PER_HOST` | `2` | licence cap used by `capacity` |
+| `TART_FLEET_SLOTS_PER_HOST` | `2` | licence cap used by `capacity`; values above `2` are rejected |
 | `TART_FLEET_STALE_CREATE_TIMEOUT` | `5m` | stale-create reclaim TTL |
 | `TART_FLEET_PROBE_TIMEOUT_SECONDS` | `60` | readiness-probe bound |
 | `TART_FLEET_QUARANTINE_TTL_HOURS` | `24` | quarantine TTL |

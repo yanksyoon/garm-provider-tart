@@ -47,8 +47,9 @@ The same section states that, except as expressly permitted elsewhere,
 
 Consequences for this provider:
 
-- **Two guests per host, maximum.** The provider rejects `slots_per_host` above `2`; a third guest is a
-  licence breach, not a tuning choice.
+- **Two guests per host, maximum.** `tart-hostctl` enforces the cap as a hard ceiling (it rejects
+  `TART_FLEET_SLOTS_PER_HOST` above `2`), and the provider rejects `slots_per_host` above `2` as a config
+  guard. A third guest is a licence breach, not a tuning choice.
 - **Permitted purposes.** The fleet is for our own software development and testing during development.
 - **Out of scope.** Offering the runners as a hosted or shared CI service to third parties is explicitly
   excluded — this is not a service bureau.

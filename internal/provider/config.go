@@ -66,7 +66,12 @@ type Config struct {
 	// The whole probe pass runs in parallel, so it is bounded by this value,
 	// not by the number of hosts.
 	ProbeTimeoutSeconds int `toml:"probe_timeout_seconds"`
-	// SlotsPerHost is the number of concurrent guests per host.
+	// SlotsPerHost is an informational planning hint for how many concurrent
+	// guests each host should run. Placement reads the host's reported
+	// Capacity.Total, which tart-hostctl derives from its own
+	// TART_FLEET_SLOTS_PER_HOST (see internal/hostctl), so this field does not
+	// itself enforce concurrency. It is still validated against the licence
+	// cap so a misconfigured plan is caught at startup.
 	SlotsPerHost int `toml:"slots_per_host"`
 
 	// Image is the golden image to clone when the bootstrap payload does not

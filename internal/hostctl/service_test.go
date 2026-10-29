@@ -118,7 +118,7 @@ func newTestService(t *testing.T, tart *fakeTart) *Service {
 
 func newTestServiceWithHealth(t *testing.T, tart *fakeTart, health Health) *Service {
 	t.Helper()
-	return NewService(Options{
+	svc, err := NewService(Options{
 		Root:         t.TempDir(),
 		Tart:         tart,
 		Health:       health,
@@ -126,6 +126,10 @@ func newTestServiceWithHealth(t *testing.T, tart *fakeTart, health Health) *Serv
 		ControllerID: "controller-1",
 		SlotsPerHost: 2,
 	})
+	if err != nil {
+		t.Fatalf("NewService error = %v, want nil", err)
+	}
+	return svc
 }
 
 func createReq(name string) CreateRequest {
@@ -687,6 +691,59 @@ func TestStatusReportsHealthGate(t *testing.T) {
 	}
 	if len(st.Instances) != 1 {
 		t.Fatalf("instances = %d, want 1", len(st.Instances))
+	}
+}
+
+func TestNewServiceRejectsSlotsAboveLicenceCap(t *testing.T) {
+	// Arrange: a slot count above the macOS licence cap.
+	tart := newFakeTart()
+
+	// Act: construct a service with SlotsPerHost = 5.
+	svc, err := NewService(Options{
+		Root:         t.TempDir(),
+		Tart:         tart,
+		Health:       fakeHealth{unlocked: true},
+		HostName:     "mac-mini-01",
+		ControllerID: "controller-1",
+		SlotsPerHost: 5,
+	})
+
+	// Assert: rejected with a validation fault and no service, so capacity can
+	// never exceed the cap.
+	if err == nil {
+		t.Fatal("NewService accepted SlotsPerHost = 5, want rejection")
+	}
+	if svc != nil {
+		t.Fatal("NewService returned a service alongside the error, want nil")
+	}
+	if fe := faultOf(t, err); fe.Fault != FaultValidation {
+		t.Fatalf("fault = %q, want %q", fe.Fault, FaultValidation)
+	}
+}
+
+func TestNewServiceDefaultsSlotsToLicenceCap(t *testing.T) {
+	// Arrange: no explicit slot count.
+	tart := newFakeTart()
+
+	// Act: construct a service with SlotsPerHost = 0 (the default).
+	svc, err := NewService(Options{
+		Root:         t.TempDir(),
+		Tart:         tart,
+		Health:       fakeHealth{unlocked: true},
+		HostName:     "mac-mini-01",
+		ControllerID: "controller-1",
+	})
+	if err != nil {
+		t.Fatalf("NewService error = %v, want nil", err)
+	}
+	st, err := svc.Status()
+	if err != nil {
+		t.Fatalf("Status error = %v, want nil", err)
+	}
+
+	// Assert: the default is the licence cap, never more.
+	if st.Capacity.Total != MaxSlotsPerHost {
+		t.Fatalf("capacity.total = %d, want %d", st.Capacity.Total, MaxSlotsPerHost)
 	}
 }
 

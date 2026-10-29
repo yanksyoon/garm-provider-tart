@@ -136,7 +136,8 @@ name = "mac-mini-01"
 address = "10.20.0.11"
 ```
 
-`slots_per_host` above 2 is rejected: the macOS licence allows two guests per host.
+`slots_per_host` is an informational planning hint — the host enforces the two-guest licence cap via
+`TART_FLEET_SLOTS_PER_HOST` — and values above 2 are rejected.
 
 `scripts/mac/fake-garm.sh` exercises the provider contract end to end on Linux with the ssh stub:
 
