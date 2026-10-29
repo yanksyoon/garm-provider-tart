@@ -13,7 +13,9 @@ command_timeout_seconds = 30
 probe_timeout_seconds = 3
 
 # The macOS licence agreement (section 2.B.iii) allows at most two guests per
-# Apple-branded host. Values above two are rejected at startup.
+# Apple-branded host. slots_per_host is an informational planning hint — the
+# host enforces the cap via TART_FLEET_SLOTS_PER_HOST — and values above two
+# are rejected at startup.
 slots_per_host = 2
 
 # Golden image and default guest resources, used when the bootstrap payload or

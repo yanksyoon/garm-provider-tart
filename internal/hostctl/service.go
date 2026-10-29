@@ -60,12 +60,26 @@ const defaultStaleCreateTTL = 5 * time.Minute
 // TART_FLEET_PROBE_TIMEOUT_SECONDS when a half-booted VM must fail faster.
 const defaultProbeTimeout = 60 * time.Second
 
+// MaxSlotsPerHost caps concurrent guests per Mac. The macOS licence agreement
+// (section 2.B.iii) allows at most two virtualised instances per Apple-branded
+// host, so a larger value is a licence breach rather than a tuning choice. It
+// is the hard ceiling enforced by NewService, mirroring the provider's
+// maxSlotsPerHost.
+const MaxSlotsPerHost = 2
+
 // NewService builds a Service. A nil Health yields an always-healthy probe so
 // the CLI works on hosts where the keychain check is unavailable; a nil Tart
-// yields a real `tart` runner.
-func NewService(o Options) *Service {
+// yields a real `tart` runner. A SlotsPerHost above MaxSlotsPerHost is
+// rejected: the macOS licence caps concurrent guests per host at two.
+func NewService(o Options) (*Service, error) {
 	if o.SlotsPerHost == 0 {
-		o.SlotsPerHost = 2
+		o.SlotsPerHost = MaxSlotsPerHost
+	}
+	if o.SlotsPerHost > MaxSlotsPerHost {
+		return nil, &FaultError{
+			Fault:   FaultValidation,
+			Message: fmt.Sprintf("slots per host %d exceeds the macOS licence cap of %d guests per host", o.SlotsPerHost, MaxSlotsPerHost),
+		}
 	}
 	if o.QuarantineTTL == 0 {
 		o.QuarantineTTL = 24 * time.Hour
@@ -97,7 +111,7 @@ func NewService(o Options) *Service {
 		staleCreateTTL: o.StaleCreateTTL,
 		probeTimeout:   o.ProbeTimeout,
 		now:            time.Now,
-	}
+	}, nil
 }
 
 // noopHealth reports an unlocked keychain and zero free disk when no real probe

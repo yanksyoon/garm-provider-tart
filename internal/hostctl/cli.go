@@ -41,7 +41,7 @@ func Run(args []string, env CLIEnv, stdin io.Reader, stdout, stderr io.Writer) i
 	}
 	verb, rest := args[0], args[1:]
 
-	svc := NewService(Options{
+	svc, err := NewService(Options{
 		Root:           env.Root,
 		HostName:       env.HostName,
 		ControllerID:   env.ControllerID,
@@ -52,6 +52,9 @@ func Run(args []string, env CLIEnv, stdin io.Reader, stdout, stderr io.Writer) i
 		Tart:           NewRealTart(env.TartBin),
 		Health:         NewRealHealth(env.SecurityBin, env.DfBin, env.Root),
 	})
+	if err != nil {
+		return writeErr(stderr, err)
+	}
 
 	switch verb {
 	case "status":

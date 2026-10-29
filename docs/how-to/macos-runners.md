@@ -39,7 +39,8 @@ Linux-only mechanism; run it before registering to prove the template renders.
 
 ## 2. Create the pool
 
-`max-runners` must not exceed the fleet capacity (hosts × `slots_per_host`). The tags list must include
+`max-runners` must not exceed the fleet capacity (hosts × `2`, the per-host licence cap enforced by
+`TART_FLEET_SLOTS_PER_HOST`). The tags list must include
 `self-hosted` explicitly: GARM configures runners with `--no-default-labels`, so a missing `self-hosted`
 label means no workflow ever matches.
 
@@ -89,12 +90,12 @@ GitHub-convention label GARM no longer adds for you, which is why the pool tags 
 
 ## 4. Capacity planning
 
-- Each Mac mini runs at most `slots_per_host` guests; the provider rejects a config above `2` because the
-  macOS licence allows two guests per host
+- Each Mac mini runs at most two guests. The host enforces the cap as a hard ceiling: `tart-hostctl`
+  rejects `TART_FLEET_SLOTS_PER_HOST` above `2`, and the provider rejects a `slots_per_host` config above
+  `2` because the macOS licence allows two guests per host
   ([docs/explanation/macos-runner-isolation.md](../explanation/macos-runner-isolation.md)).
-- For one pool, set `--max-runners` to `hosts × slots_per_host` so GARM never asks for more than the
-  fleet can hold. `--min-idle-runners` trades warm capacity for idle cost; keep it at or below
-  `max-runners`.
+- For one pool, set `--max-runners` to `hosts × 2` so GARM never asks for more than the fleet can hold.
+  `--min-idle-runners` trades warm capacity for idle cost; keep it at or below `max-runners`.
 - A single-Mac deployment is simplest as one provider and one pool per Mac with `--max-runners 2`. A
   multi-host pool needs `max-runners = hosts × 2` and lets the provider place VMs across the fleet.
 - Watch `provider_metric` lines on the provider stderr (GARM logs them): `probe up= full= unknown=`,
