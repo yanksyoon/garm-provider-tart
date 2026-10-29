@@ -209,6 +209,32 @@ func TestTemplateRenderIdempotent(t *testing.T) {
 	}
 }
 
+// TestTemplateAuthHeaderInterpolatesToken is the regression guard for the
+// bearer-header bug: auth_header_file historically emitted the literal string
+// "Authorization: Bearer ***" (a printf format with no %s), so $BEARER_TOKEN
+// was dropped and every GARM metadata/status call carried an invalid header,
+// failing the runner bootstrap at the first credential fetch. The rendered
+// template must interpolate the token via %s and never carry the masked "***"
+// placeholder.
+func TestTemplateAuthHeaderInterpolatesToken(t *testing.T) {
+	for _, jit := range []bool{true, false} {
+		t.Run(jitLabel(jit), func(t *testing.T) {
+			script, err := InstallRunnerScript(ExampleParams(jit))
+			if err != nil {
+				t.Fatalf("render %s: %v", jitLabel(jit), err)
+			}
+			out := string(script)
+
+			if !strings.Contains(out, `printf 'Authorization: Bearer %s' "$BEARER_TOKEN"`) {
+				t.Errorf("%s render: auth header does not interpolate the token (want printf with %%s)", jitLabel(jit))
+			}
+			if strings.Contains(out, "***") {
+				t.Errorf("%s render: auth header still contains the masked '***' placeholder", jitLabel(jit))
+			}
+		})
+	}
+}
+
 // assertForbidden fails the test if the rendered script contains any
 // Linux-only mechanism the macOS template must not emit.
 func assertForbidden(t *testing.T, out string) {
