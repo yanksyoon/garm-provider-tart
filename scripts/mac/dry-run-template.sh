@@ -100,6 +100,7 @@ run_script() {
     FAKE_CURL_FIXTURES="$scripts_dir/testdata/fixtures" \
     FAKE_CURL_CALLBACK_LOG="$workdir/callbacks.log" \
     FAKE_CURL_ARGV_LOG="$workdir/curl-argv.log" \
+    FAKE_CURL_AUTH_HDR_LOG="$workdir/auth-header.log" \
     SVC_LOG="$workdir/svc.log" \
     CONFIG_LOG="$workdir/config.log" \
     bash "$rendered"
@@ -115,6 +116,22 @@ run_script
 if grep -q 'test-jwt-token' "$workdir/curl-argv.log" 2>/dev/null; then
   echo "dry-run: bearer token leaked onto a curl command line" >&2
   grep -n 'test-jwt-token' "$workdir/curl-argv.log" >&2
+  exit 1
+fi
+
+# Auth header: the bearer token must actually reach curl through the header
+# file as the real token — never the masked "***" placeholder (a historical
+# regression where the printf format had no %s and the token was dropped).
+# fake-curl records the header-file content for every -H @file call, so assert
+# the log is non-empty and every recorded header carries the real token.
+if [ ! -s "$workdir/auth-header.log" ]; then
+  echo "dry-run: fake-curl captured no auth header" >&2
+  exit 1
+fi
+nonmatching="$(grep -cvx 'Authorization: Bearer test-jwt-token' "$workdir/auth-header.log" || true)"
+if [ "$nonmatching" -ne 0 ]; then
+  echo "dry-run: auth header did not carry the real bearer token" >&2
+  cat "$workdir/auth-header.log" >&2
   exit 1
 fi
 

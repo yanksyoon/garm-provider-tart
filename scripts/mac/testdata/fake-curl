@@ -11,11 +11,15 @@
 #   FAKE_CURL_CALLBACK_LOG  file to append recorded status-callback bodies to
 #   FAKE_CURL_ARGV_LOG      file to append the full argv of every invocation to
 #                           (used to prove the bearer token never reaches argv)
+#   FAKE_CURL_AUTH_HDR_LOG  file to append the content of every -H @file header
+#                           to (used to prove the bearer token actually reaches
+#                           curl as the real token, not the masked "***")
 set -euo pipefail
 
 fixtures="${FAKE_CURL_FIXTURES:-$(cd "$(dirname "${BASH_SOURCE[0]}")/fixtures" && pwd)}"
 callback_log="${FAKE_CURL_CALLBACK_LOG:-/dev/null}"
 argv_log="${FAKE_CURL_ARGV_LOG:-/dev/null}"
+auth_hdr_log="${FAKE_CURL_AUTH_HDR_LOG:-/dev/null}"
 
 if [ "$argv_log" != "/dev/null" ]; then
   printf '%s\n' "$*" >> "$argv_log"
@@ -27,13 +31,33 @@ data=""
 prev=""
 for arg in "$@"; do
   case "$arg" in
-    -o|-d)
+    -o|-d|-H)
       prev="$arg"
       ;;
     *)
       case "$prev" in
         -o) out="$arg" ;;
         -d) data="$arg" ;;
+        -H)
+          # A header read from a file (-H @path) is how the bearer token is
+          # passed to curl. Record its content so the dry run can assert the
+          # real token arrived, and reject the masked "***" placeholder.
+          case "$arg" in
+            @*)
+              hdr_file="${arg#@}"
+              if [ -f "$hdr_file" ]; then
+                hdr_content="$(cat "$hdr_file")"
+                printf '%s\n' "$hdr_content" >> "$auth_hdr_log"
+                case "$hdr_content" in
+                  *'***'*)
+                    echo "fake-curl: auth header still contains the '***' placeholder" >&2
+                    exit 1
+                    ;;
+                esac
+              fi
+              ;;
+          esac
+          ;;
       esac
       prev=""
       # The template always passes the URL as the last argument, so each
